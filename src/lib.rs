@@ -64,6 +64,7 @@ pub fn compile(source: &str) -> Result<Datapack> {
 enum Token {
     LeftParen,
     RightParen,
+    Slash,
     Ident(String),
     Test,
     Assert,
@@ -92,6 +93,7 @@ impl Display for Token {
         match self {
             Token::LeftParen => write!(f, "("),
             Token::RightParen => write!(f, ")"),
+            Token::Slash => write!(f, "/"),
             Token::Ident(i) => write!(f, "{}", i),
             Token::Test => write!(f, "test"),
             Token::Assert => write!(f, "assert"),
@@ -146,6 +148,8 @@ fn lex(source: &str) -> Result<Vec<Token>> {
             tokens.push(Token::LeftParen);
         } else if c == ')' {
             tokens.push(Token::RightParen);
+        } else if c == '/' {
+            tokens.push(Token::Slash);
         } else if c.is_alphabetic() {
             let mut s = String::from(c);
 
@@ -204,6 +208,16 @@ fn lex_test() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_lex_slash() -> Result<()> {
+    use Token::*;
+    assert_eq!(
+        vec![ Slash ],
+        lex("/")?
+    );
+    Ok(())
+}
+
 #[derive(PartialEq, Eq, Debug)]
 enum ASTNode {
     Test { name: String, stmt: Statement },
@@ -212,6 +226,7 @@ enum ASTNode {
 #[derive(PartialEq, Eq, Debug)]
 enum Statement {
     Assert { expr: Expr },
+    Command { text: String }
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -272,6 +287,13 @@ fn parse_stmt(tokens: &mut Tokens) -> Result<Statement> {
         Token::Assert => Ok(Statement::Assert {
             expr: parse_expr(tokens)?,
         }),
+        Token::Slash => {
+            if let Token::String(text) = tokens.next()? {
+                Ok(Statement::Command { text })
+            } else {
+                Err(anyhow!("Expected a string to follow /"))
+            }
+        }
         _ => Err(anyhow!("Expected a statement")),
     }?;
     tokens.require(Token::RightParen)?;
@@ -310,13 +332,39 @@ fn test_parse() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_parse_command() -> Result<()> {
+    use Token::*;
+    let tokens = vec![
+        LeftParen, Test, String("test 2".to_owned()), LeftParen, Slash, String("cmd text".to_owned()), RightParen, RightParen
+    ];
+    assert_eq!(
+        ASTNode::Test {
+            name: "test 2".to_owned(),
+            stmt: Statement::Command { text: "cmd text".to_owned() }
+        },
+        parse(tokens)?
+    );
+    
+    Ok(())
+}
+
 fn codegen(node: ASTNode) -> Vec<Function> {
     let ASTNode::Test {
         name,
-        stmt: Statement::Assert {
-            expr: Expr::LitBool(b),
-        },
+        stmt
     } = node;
+
+    let cmd = match stmt {
+        Statement::Assert {
+            expr: Expr::LitBool(b),
+        } => format!(
+            r#"tellraw @s "{} - {}""#,
+            if b { "ok" } else { "not ok" },
+            escape(&name)
+        ),
+        Statement::Command { text } => text,
+    };
 
     vec![
         Function {
@@ -327,11 +375,7 @@ fn codegen(node: ASTNode) -> Vec<Function> {
         Function {
             namespace: "mctest".to_owned(),
             name: "test1".to_owned(),
-            content: format!(
-                r#"tellraw @s "{} - {}""#,
-                if b { "ok" } else { "not ok" },
-                escape(&name)
-            ),
+            content: cmd
         },
         Function {
             namespace: "mctest".to_owned(),

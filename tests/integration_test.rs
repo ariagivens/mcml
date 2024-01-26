@@ -53,3 +53,8 @@ fn literals() -> Result<()> {
 fn fail() {
     run_test(include_str!("fail.mcml")).unwrap();
 }
+
+#[test]
+fn hello_world() -> Result<()> {
+    run_test(include_str!("commands.mcml"))
+}
