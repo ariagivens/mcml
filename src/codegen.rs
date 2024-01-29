@@ -1,12 +1,9 @@
-use crate::parse::{ASTNode, Statement, Expr};
 use crate::datapack::Function;
+use crate::parse::{ASTNode, Expr, Statement};
 use crate::utility::escape;
 
 pub fn codegen(node: ASTNode) -> Vec<Function> {
-    let ASTNode::Test {
-        name,
-        stmt
-    } = node;
+    let ASTNode::Test { name, stmt } = node;
 
     let cmd = match stmt {
         Statement::Assert {
@@ -28,7 +25,7 @@ pub fn codegen(node: ASTNode) -> Vec<Function> {
         Function {
             namespace: "mctest".to_owned(),
             name: "test1".to_owned(),
-            content: cmd
+            content: cmd,
         },
         Function {
             namespace: "mctest".to_owned(),

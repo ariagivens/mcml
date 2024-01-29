@@ -1,6 +1,6 @@
-use std::collections::VecDeque;
 use crate::lex::Token;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
+use std::collections::VecDeque;
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum ASTNode {
@@ -10,7 +10,7 @@ pub enum ASTNode {
 #[derive(PartialEq, Eq, Debug)]
 pub enum Statement {
     Assert { expr: Expr },
-    Command { text: String }
+    Command { text: String },
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -120,15 +120,24 @@ fn test_parse() -> Result<()> {
 fn test_parse_command() -> Result<()> {
     use Token::*;
     let tokens = vec![
-        LeftParen, Test, String("test 2".to_owned()), LeftParen, Slash, String("cmd text".to_owned()), RightParen, RightParen
+        LeftParen,
+        Test,
+        String("test 2".to_owned()),
+        LeftParen,
+        Slash,
+        String("cmd text".to_owned()),
+        RightParen,
+        RightParen,
     ];
     assert_eq!(
         ASTNode::Test {
             name: "test 2".to_owned(),
-            stmt: Statement::Command { text: "cmd text".to_owned() }
+            stmt: Statement::Command {
+                text: "cmd text".to_owned()
+            }
         },
         parse(tokens)?
     );
-    
+
     Ok(())
 }

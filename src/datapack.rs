@@ -1,7 +1,7 @@
+use anyhow::Result;
 use json::object;
 use std::io::{Cursor, Write};
 use zip::ZipWriter;
-use anyhow::Result;
 
 pub struct Datapack {
     pub description: String,

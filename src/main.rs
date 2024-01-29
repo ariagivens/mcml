@@ -1,8 +1,8 @@
+use anyhow::Result;
 use clap::Parser;
 use mcml::compile;
-use std::path::PathBuf;
 use std::fs;
-use anyhow::Result;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 struct Args {

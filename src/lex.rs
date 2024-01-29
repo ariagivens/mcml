@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
-use anyhow::{Result, anyhow};
 use crate::utility::escape;
+use anyhow::{anyhow, Result};
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum Token {
@@ -51,7 +51,6 @@ impl Display for Token {
         }
     }
 }
-
 
 struct Characters {
     data: Vec<char>,
@@ -131,34 +130,28 @@ mod test {
     use Token::*;
     #[test]
 
-fn lex_test() -> Result<()> {
-    
-    assert_eq!(
-        vec![
-            LeftParen,
-            Test,
-            String(r#"a "test" \named\ test"#.to_owned()),
-            LeftParen,
-            Assert,
-            Boolean(true),
-            Boolean(false),
-            RightParen,
-            RightParen
-        ],
-        lex(r#"(test "a \"test\" \\named\\ test" (assert true false))"#)?
-    );
-    Ok(())
-}
+    fn lex_test() -> Result<()> {
+        assert_eq!(
+            vec![
+                LeftParen,
+                Test,
+                String(r#"a "test" \named\ test"#.to_owned()),
+                LeftParen,
+                Assert,
+                Boolean(true),
+                Boolean(false),
+                RightParen,
+                RightParen
+            ],
+            lex(r#"(test "a \"test\" \\named\\ test" (assert true false))"#)?
+        );
+        Ok(())
+    }
 
-#[test]
-fn test_lex_slash() -> Result<()> {
-    use Token::*;
-    assert_eq!(
-        vec![ Slash ],
-        lex("/")?
-    );
-    Ok(())
+    #[test]
+    fn test_lex_slash() -> Result<()> {
+        use Token::*;
+        assert_eq!(vec![Slash], lex("/")?);
+        Ok(())
+    }
 }
-
-}
-

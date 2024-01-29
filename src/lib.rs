@@ -1,14 +1,14 @@
-mod lex;
-mod utility;
-mod parse;
 mod codegen;
 mod datapack;
+mod lex;
+mod parse;
+mod utility;
 
-use lex::lex;
-use parse::parse;
+use anyhow::Result;
 use codegen::codegen;
 pub use datapack::Datapack;
-use anyhow::Result;
+use lex::lex;
+use parse::parse;
 
 pub fn compile(source: &str) -> Result<Datapack> {
     let functions = codegen(parse(lex(source)?)?);
