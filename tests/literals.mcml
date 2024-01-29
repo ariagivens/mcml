@@ -1,1 +1,3 @@
 (test "booleans" (assert true))
+
+(test "integers" (asserteq 1 1))

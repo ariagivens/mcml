@@ -11,7 +11,9 @@ pub enum Token {
     Ident(String),
     Test,
     Assert,
+    AssertEq,
     Boolean(bool),
+    Int(i64),
     String(String),
 }
 
@@ -21,6 +23,8 @@ impl Token {
             Token::Test
         } else if &s == "assert" {
             Token::Assert
+        } else if &s == "asserteq" {
+            Token::AssertEq
         } else if &s == "true" {
             Token::Boolean(true)
         } else if &s == "false" {
@@ -40,6 +44,7 @@ impl Display for Token {
             Token::Ident(i) => write!(f, "{}", i),
             Token::Test => write!(f, "test"),
             Token::Assert => write!(f, "assert"),
+            Token::AssertEq => write!(f, "asserteq"),
             Token::Boolean(b) => {
                 if *b {
                     write!(f, "true")
@@ -47,6 +52,7 @@ impl Display for Token {
                     write!(f, "false")
                 }
             }
+            Token::Int(i) => write!(f, "{}", i),
             Token::String(s) => write!(f, "{}", escape(s)),
         }
     }
@@ -115,6 +121,18 @@ pub fn lex(source: &str) -> Result<Vec<Token>> {
                     s.push(c);
                 }
             }
+        } else if c.is_numeric() || c == '-' {
+            let mut i = String::from(c);
+            while let Some(p) = cs.peek() {
+                if p.is_numeric() {
+                    i.push(cs.next().unwrap())
+                } else if *p == '_' {
+                    cs.next();
+                } else {
+                    tokens.push(Token::Int(i.parse()?));
+                    break;
+                }
+            }
         } else if c.is_whitespace() {
         } else {
             return Err(anyhow!("Unexpected character: {}", c));
@@ -130,7 +148,7 @@ mod test {
     use Token::*;
     #[test]
 
-    fn lex_test() -> Result<()> {
+    fn bools() -> Result<()> {
         assert_eq!(
             vec![
                 LeftParen,
@@ -149,9 +167,23 @@ mod test {
     }
 
     #[test]
-    fn test_lex_slash() -> Result<()> {
-        use Token::*;
+    fn slash() -> Result<()> {
         assert_eq!(vec![Slash], lex("/")?);
+        Ok(())
+    }
+
+    #[test]
+    fn integers() -> Result<()> {
+        assert_eq!(
+            vec![Int(1), Int(2134234), Int(-12534546)],
+            lex("1 2134234 -12534546 1_000_000")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn asserteq() -> Result<()> {
+        assert_eq!(vec![AssertEq], lex("asserteq")?);
         Ok(())
     }
 }

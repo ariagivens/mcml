@@ -3,19 +3,21 @@ use anyhow::{anyhow, Result};
 use std::collections::VecDeque;
 
 #[derive(PartialEq, Eq, Debug)]
-pub enum ASTNode {
+pub enum Definition {
     Test { name: String, stmt: Statement },
 }
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum Statement {
     Assert { expr: Expr },
+    AssertEq { left: Expr, right: Expr },
     Command { text: String },
 }
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum Expr {
     LitBool(bool),
+    LitInt(i64),
 }
 
 struct Tokens {
@@ -45,22 +47,34 @@ impl Tokens {
     }
 }
 
-pub fn parse(tokens: Vec<Token>) -> Result<ASTNode> {
+pub fn parse(tokens: Vec<Token>) -> Result<Vec<Definition>> {
     let mut tokens = Tokens::new(tokens);
-    tokens.require(Token::LeftParen)?;
-    let node = match tokens.next()? {
+    let mut defs = Vec::new();
+    while let Ok(token) = tokens.next() {
+        if token == Token::LeftParen {
+            defs.push(parse_definition(&mut tokens)?);
+        } else {
+            return Err(anyhow!("Unexpected token: {}", token));
+        }
+    }
+    Ok(defs)
+}
+    
+
+fn parse_definition(mut tokens: &mut Tokens) -> Result<Definition> {
+    let def = match tokens.next()? {
         Token::Test => parse_test(&mut tokens),
         _ => Err(anyhow!("Unexpected thingy")),
     }?;
     tokens.require(Token::RightParen)?;
-    Ok(node)
+    Ok(def)
 }
 
-fn parse_test(tokens: &mut Tokens) -> Result<ASTNode> {
+fn parse_test(tokens: &mut Tokens) -> Result<Definition> {
     if let Token::String(name) = tokens.next()? {
         tokens.require(Token::LeftParen)?;
         let stmt = parse_stmt(tokens)?;
-        Ok(ASTNode::Test { name, stmt })
+        Ok(Definition::Test { name, stmt })
     } else {
         Err(anyhow!("Expected test to have name"))
     }
@@ -71,6 +85,7 @@ fn parse_stmt(tokens: &mut Tokens) -> Result<Statement> {
         Token::Assert => Ok(Statement::Assert {
             expr: parse_expr(tokens)?,
         }),
+        Token::AssertEq => Ok(Statement::AssertEq { left: parse_expr(tokens)?, right: parse_expr(tokens)?}),
         Token::Slash => {
             if let Token::String(text) = tokens.next()? {
                 Ok(Statement::Command { text })
@@ -87,57 +102,124 @@ fn parse_stmt(tokens: &mut Tokens) -> Result<Statement> {
 fn parse_expr(tokens: &mut Tokens) -> Result<Expr> {
     match tokens.next()? {
         Token::Boolean(b) => Ok(Expr::LitBool(b)),
+        Token::Int(i) => Ok(Expr::LitInt(i)),
         _ => Err(anyhow!("Expected an expression")),
     }
 }
 
-#[test]
-fn test_parse() -> Result<()> {
-    use Token::*;
-    let tokens = vec![
-        LeftParen,
-        Test,
-        String(r#"test 1"#.to_owned()),
-        LeftParen,
-        Assert,
-        Boolean(true),
-        RightParen,
-        RightParen,
-    ];
-    assert_eq!(
-        ASTNode::Test {
-            name: "test 1".to_owned(),
-            stmt: Statement::Assert {
-                expr: Expr::LitBool(true)
-            }
-        },
-        parse(tokens)?
-    );
-    Ok(())
-}
+#[cfg(test)]
+mod test {
+    use super::Token::*;
+    use super::*;
 
-#[test]
-fn test_parse_command() -> Result<()> {
-    use Token::*;
-    let tokens = vec![
-        LeftParen,
-        Test,
-        String("test 2".to_owned()),
-        LeftParen,
-        Slash,
-        String("cmd text".to_owned()),
-        RightParen,
-        RightParen,
-    ];
-    assert_eq!(
-        ASTNode::Test {
-            name: "test 2".to_owned(),
-            stmt: Statement::Command {
-                text: "cmd text".to_owned()
-            }
-        },
-        parse(tokens)?
-    );
+    #[test]
+    fn assert_bool() -> Result<()> {
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String(r#"test 1"#.to_owned()),
+            LeftParen,
+            Assert,
+            Boolean(true),
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
+            vec![Definition::Test {
+                name: "test 1".to_owned(),
+                stmt: Statement::Assert {
+                    expr: Expr::LitBool(true)
+                }
+            }],
+            parse(tokens)?
+        );
+        Ok(())
+    }
 
-    Ok(())
+    #[test]
+    fn command_literal() -> Result<()> {
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String("test 2".to_owned()),
+            LeftParen,
+            Slash,
+            String("cmd text".to_owned()),
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
+            vec![Definition::Test {
+                name: "test 2".to_owned(),
+                stmt: Statement::Command {
+                    text: "cmd text".to_owned()
+                }
+            }],
+            parse(tokens)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn asserteq_ints() -> Result<()> {
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String("test 3".to_owned()),
+            LeftParen,
+            AssertEq,
+            Int(5),
+            Int(-5),
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
+            vec![Definition::Test {
+                name: "test 3".to_owned(),
+                stmt: Statement::AssertEq {
+                    left: Expr::LitInt(5),
+                    right: Expr::LitInt(-5)
+                }
+            }],
+            parse(tokens)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn multitest() -> Result<()> {
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String(r#"test 1"#.to_owned()),
+            LeftParen,
+            Assert,
+            Boolean(true),
+            RightParen,
+            RightParen,
+            LeftParen,
+            Test,
+            String(r#"test 2"#.to_owned()),
+            LeftParen,
+            Assert,
+            Boolean(true),
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
+            vec![Definition::Test {
+                name: "test 1".to_owned(),
+                stmt: Statement::Assert {
+                    expr: Expr::LitBool(true)
+                }
+            }, Definition::Test {
+                name: "test 2".to_owned(),
+                stmt: Statement::Assert {
+                    expr: Expr::LitBool(true)
+                }
+            }],
+            parse(tokens)?
+        );
+        Ok(())
+    }
 }
