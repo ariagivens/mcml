@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, iter::Peekable};
 
 use crate::utility::escape;
 use anyhow::{anyhow, Result};
@@ -7,6 +7,9 @@ use anyhow::{anyhow, Result};
 pub enum Token {
     LeftParen,
     RightParen,
+    Plus,
+    Dash,
+    Star,
     Slash,
     Ident(String),
     Test,
@@ -40,6 +43,9 @@ impl Display for Token {
         match self {
             Token::LeftParen => write!(f, "("),
             Token::RightParen => write!(f, ")"),
+            Token::Plus => write!(f, "+"),
+            Token::Dash => write!(f, "-"),
+            Token::Star => write!(f, "*"),
             Token::Slash => write!(f, "/"),
             Token::Ident(i) => write!(f, "{}", i),
             Token::Test => write!(f, "test"),
@@ -90,6 +96,10 @@ pub fn lex(source: &str) -> Result<Vec<Token>> {
             tokens.push(Token::LeftParen);
         } else if c == ')' {
             tokens.push(Token::RightParen);
+        } else if c == '+' {
+            tokens.push(Token::Plus);
+        } else if c == '*' {
+            tokens.push(Token::Star);
         } else if c == '/' {
             tokens.push(Token::Slash);
         } else if c.is_alphabetic() {
@@ -121,16 +131,14 @@ pub fn lex(source: &str) -> Result<Vec<Token>> {
                     s.push(c);
                 }
             }
-        } else if c.is_numeric() || c == '-' {
-            let mut i = String::from(c);
-            while let Some(p) = cs.peek() {
-                if p.is_numeric() {
-                    i.push(cs.next().unwrap())
-                } else if *p == '_' {
-                    cs.next();
+        } else if c.is_numeric() {
+            tokens.push(lex_int(c, &mut cs)?);
+        } else if c == '-' {
+            if let Some(next) = cs.peek() {
+                if next.is_numeric() {
+                    tokens.push(lex_int(c, &mut cs)?);
                 } else {
-                    tokens.push(Token::Int(i.parse()?));
-                    break;
+                    tokens.push(Token::Dash);
                 }
             }
         } else if c.is_whitespace() {
@@ -140,6 +148,19 @@ pub fn lex(source: &str) -> Result<Vec<Token>> {
     }
 
     Ok(tokens)
+}
+
+fn lex_int(c: char, cs: &mut Peekable<Characters>) -> Result<Token> {
+    let mut i = String::from(c);
+    loop {
+        match cs.peek() {
+            Some(p) if p.is_numeric() => i.push(cs.next().unwrap()),
+            Some(p) if *p == '_' => {
+                cs.next();
+            }
+            _ => break Ok(Token::Int(i.parse()?)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -175,7 +196,7 @@ mod test {
     #[test]
     fn integers() -> Result<()> {
         assert_eq!(
-            vec![Int(1), Int(2134234), Int(-12534546)],
+            vec![Int(1), Int(2134234), Int(-12534546), Int(1_000_000)],
             lex("1 2134234 -12534546 1_000_000")?
         );
         Ok(())
@@ -184,6 +205,12 @@ mod test {
     #[test]
     fn asserteq() -> Result<()> {
         assert_eq!(vec![AssertEq], lex("asserteq")?);
+        Ok(())
+    }
+
+    #[test]
+    fn arithmetic() -> Result<()> {
+        assert_eq!(vec![Plus, Dash, Star, Slash], lex("+ - * /")?);
         Ok(())
     }
 }

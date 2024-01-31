@@ -58,3 +58,8 @@ fn fail() {
 fn hello_world() -> Result<()> {
     run_test(include_str!("commands.mcml"))
 }
+
+#[test]
+fn arithmetic() -> Result<()> {
+    run_test(include_str!("arithmetic.mcml"))
+}

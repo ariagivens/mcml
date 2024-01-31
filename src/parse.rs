@@ -18,6 +18,10 @@ pub enum Statement {
 pub enum Expr {
     LitBool(bool),
     LitInt(i64),
+    Plus { left: Box<Expr>, right: Box<Expr> },
+    Minus { left: Box<Expr>, right: Box<Expr> },
+    Times { left: Box<Expr>, right: Box<Expr> },
+    Divide { left: Box<Expr>, right: Box<Expr> },
 }
 
 struct Tokens {
@@ -59,7 +63,6 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<Definition>> {
     }
     Ok(defs)
 }
-    
 
 fn parse_definition(mut tokens: &mut Tokens) -> Result<Definition> {
     let def = match tokens.next()? {
@@ -85,7 +88,10 @@ fn parse_stmt(tokens: &mut Tokens) -> Result<Statement> {
         Token::Assert => Ok(Statement::Assert {
             expr: parse_expr(tokens)?,
         }),
-        Token::AssertEq => Ok(Statement::AssertEq { left: parse_expr(tokens)?, right: parse_expr(tokens)?}),
+        Token::AssertEq => Ok(Statement::AssertEq {
+            left: parse_expr(tokens)?,
+            right: parse_expr(tokens)?,
+        }),
         Token::Slash => {
             if let Token::String(text) = tokens.next()? {
                 Ok(Statement::Command { text })
@@ -103,8 +109,33 @@ fn parse_expr(tokens: &mut Tokens) -> Result<Expr> {
     match tokens.next()? {
         Token::Boolean(b) => Ok(Expr::LitBool(b)),
         Token::Int(i) => Ok(Expr::LitInt(i)),
+        Token::LeftParen => parse_arithmetic(tokens),
         _ => Err(anyhow!("Expected an expression")),
     }
+}
+
+fn parse_arithmetic(tokens: &mut Tokens) -> Result<Expr> {
+    let expr = match tokens.next()? {
+        Token::Plus => Expr::Plus {
+            left: Box::new(parse_expr(tokens)?),
+            right: Box::new(parse_expr(tokens)?),
+        },
+        Token::Dash => Expr::Minus {
+            left: Box::new(parse_expr(tokens)?),
+            right: Box::new(parse_expr(tokens)?),
+        },
+        Token::Star => Expr::Times {
+            left: Box::new(parse_expr(tokens)?),
+            right: Box::new(parse_expr(tokens)?),
+        },
+        Token::Slash => Expr::Divide {
+            left: Box::new(parse_expr(tokens)?),
+            right: Box::new(parse_expr(tokens)?),
+        },
+        _ => return Err(anyhow!("Expected arithmetic expression")),
+    };
+    tokens.require(Token::RightParen)?;
+    Ok(expr)
 }
 
 #[cfg(test)]
@@ -207,15 +238,180 @@ mod test {
             RightParen,
         ];
         assert_eq!(
+            vec![
+                Definition::Test {
+                    name: "test 1".to_owned(),
+                    stmt: Statement::Assert {
+                        expr: Expr::LitBool(true)
+                    }
+                },
+                Definition::Test {
+                    name: "test 2".to_owned(),
+                    stmt: Statement::Assert {
+                        expr: Expr::LitBool(true)
+                    }
+                }
+            ],
+            parse(tokens)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn addition() -> Result<()> {
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String(r#"test 1"#.to_owned()),
+            LeftParen,
+            Assert,
+            LeftParen,
+            Plus,
+            Int(1),
+            Int(1),
+            RightParen,
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
             vec![Definition::Test {
                 name: "test 1".to_owned(),
                 stmt: Statement::Assert {
-                    expr: Expr::LitBool(true)
+                    expr: Expr::Plus {
+                        left: Box::new(Expr::LitInt(1)),
+                        right: Box::new(Expr::LitInt(1))
+                    }
                 }
-            }, Definition::Test {
-                name: "test 2".to_owned(),
+            }],
+            parse(tokens)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn subtraction() -> Result<()> {
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String(r#"test 1"#.to_owned()),
+            LeftParen,
+            Assert,
+            LeftParen,
+            Dash,
+            Int(1),
+            Int(1),
+            RightParen,
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
+            vec![Definition::Test {
+                name: "test 1".to_owned(),
                 stmt: Statement::Assert {
-                    expr: Expr::LitBool(true)
+                    expr: Expr::Minus {
+                        left: Box::new(Expr::LitInt(1)),
+                        right: Box::new(Expr::LitInt(1))
+                    }
+                }
+            }],
+            parse(tokens)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn multiplication() -> Result<()> {
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String(r#"test 1"#.to_owned()),
+            LeftParen,
+            Assert,
+            LeftParen,
+            Star,
+            Int(1),
+            Int(1),
+            RightParen,
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
+            vec![Definition::Test {
+                name: "test 1".to_owned(),
+                stmt: Statement::Assert {
+                    expr: Expr::Times {
+                        left: Box::new(Expr::LitInt(1)),
+                        right: Box::new(Expr::LitInt(1))
+                    }
+                }
+            }],
+            parse(tokens)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn division() -> Result<()> {
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String(r#"test 1"#.to_owned()),
+            LeftParen,
+            Assert,
+            LeftParen,
+            Slash,
+            Int(1),
+            Int(1),
+            RightParen,
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
+            vec![Definition::Test {
+                name: "test 1".to_owned(),
+                stmt: Statement::Assert {
+                    expr: Expr::Divide {
+                        left: Box::new(Expr::LitInt(1)),
+                        right: Box::new(Expr::LitInt(1))
+                    }
+                }
+            }],
+            parse(tokens)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nested_arithmetic() -> Result<()> {
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String(r#"test 1"#.to_owned()),
+            LeftParen,
+            Assert,
+            LeftParen,
+            Plus,
+            Int(1),
+            LeftParen,
+            Star,
+            Int(1),
+            Int(1),
+            RightParen,
+            RightParen,
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
+            vec![Definition::Test {
+                name: "test 1".to_owned(),
+                stmt: Statement::Assert {
+                    expr: Expr::Plus {
+                        left: Box::new(Expr::LitInt(1)),
+                        right: Box::new(Expr::Times {
+                            left: Box::new(Expr::LitInt(1)),
+                            right: Box::new(Expr::LitInt(1))
+                        })
+                    }
                 }
             }],
             parse(tokens)?
