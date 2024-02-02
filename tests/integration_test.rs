@@ -63,3 +63,8 @@ fn hello_world() -> Result<()> {
 fn arithmetic() -> Result<()> {
     run_test(include_str!("arithmetic.mcml"))
 }
+
+#[test]
+fn variables() -> Result<()> {
+    run_test(include_str!("variables.mcml"))
+}

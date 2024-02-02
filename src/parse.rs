@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum Definition {
-    Test { name: String, stmt: Statement },
+    Test { name: String, stmts: Vec<Statement> },
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -12,12 +12,14 @@ pub enum Statement {
     Assert { expr: Expr },
     AssertEq { left: Expr, right: Expr },
     Command { text: String },
+    Let { variable_name: String, expr: Expr },
 }
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum Expr {
     LitBool(bool),
     LitInt(i64),
+    Variable(String),
     Plus { left: Box<Expr>, right: Box<Expr> },
     Minus { left: Box<Expr>, right: Box<Expr> },
     Times { left: Box<Expr>, right: Box<Expr> },
@@ -65,19 +67,22 @@ pub fn parse(tokens: Vec<Token>) -> Result<Vec<Definition>> {
 }
 
 fn parse_definition(mut tokens: &mut Tokens) -> Result<Definition> {
-    let def = match tokens.next()? {
+    match tokens.next()? {
         Token::Test => parse_test(&mut tokens),
         _ => Err(anyhow!("Unexpected thingy")),
-    }?;
-    tokens.require(Token::RightParen)?;
-    Ok(def)
+    }
 }
 
 fn parse_test(tokens: &mut Tokens) -> Result<Definition> {
     if let Token::String(name) = tokens.next()? {
-        tokens.require(Token::LeftParen)?;
-        let stmt = parse_stmt(tokens)?;
-        Ok(Definition::Test { name, stmt })
+        let mut stmts = Vec::new();
+        loop {
+            match tokens.next()? {
+                Token::LeftParen => stmts.push(parse_stmt(tokens)?),
+                Token::RightParen => return Ok(Definition::Test { name, stmts }),
+                x => return Err(anyhow!("Expected statement saw {}", x)),
+            }
+        }
     } else {
         Err(anyhow!("Expected test to have name"))
     }
@@ -99,6 +104,19 @@ fn parse_stmt(tokens: &mut Tokens) -> Result<Statement> {
                 Err(anyhow!("Expected a string to follow /"))
             }
         }
+        Token::Let => {
+            tokens.require(Token::LeftParen)?;
+            if let Token::Ident(variable_name) = tokens.next()? {
+                let expr = parse_expr(tokens)?;
+                tokens.require(Token::RightParen)?;
+                Ok(Statement::Let {
+                    variable_name,
+                    expr,
+                })
+            } else {
+                Err(anyhow!("Expected variable identifier"))
+            }
+        }
         _ => Err(anyhow!("Expected a statement")),
     }?;
     tokens.require(Token::RightParen)?;
@@ -109,6 +127,7 @@ fn parse_expr(tokens: &mut Tokens) -> Result<Expr> {
     match tokens.next()? {
         Token::Boolean(b) => Ok(Expr::LitBool(b)),
         Token::Int(i) => Ok(Expr::LitInt(i)),
+        Token::Ident(x) => Ok(Expr::Variable(x)),
         Token::LeftParen => parse_arithmetic(tokens),
         _ => Err(anyhow!("Expected an expression")),
     }
@@ -148,7 +167,7 @@ mod test {
         let tokens = vec![
             LeftParen,
             Test,
-            String(r#"test 1"#.to_owned()),
+            String(r#"test"#.to_owned()),
             LeftParen,
             Assert,
             Boolean(true),
@@ -157,10 +176,10 @@ mod test {
         ];
         assert_eq!(
             vec![Definition::Test {
-                name: "test 1".to_owned(),
-                stmt: Statement::Assert {
+                name: "test".to_owned(),
+                stmts: vec![Statement::Assert {
                     expr: Expr::LitBool(true)
-                }
+                }]
             }],
             parse(tokens)?
         );
@@ -182,9 +201,9 @@ mod test {
         assert_eq!(
             vec![Definition::Test {
                 name: "test 2".to_owned(),
-                stmt: Statement::Command {
+                stmts: vec![Statement::Command {
                     text: "cmd text".to_owned()
-                }
+                }]
             }],
             parse(tokens)?
         );
@@ -207,10 +226,10 @@ mod test {
         assert_eq!(
             vec![Definition::Test {
                 name: "test 3".to_owned(),
-                stmt: Statement::AssertEq {
+                stmts: vec![Statement::AssertEq {
                     left: Expr::LitInt(5),
                     right: Expr::LitInt(-5)
-                }
+                }]
             }],
             parse(tokens)?
         );
@@ -241,15 +260,15 @@ mod test {
             vec![
                 Definition::Test {
                     name: "test 1".to_owned(),
-                    stmt: Statement::Assert {
+                    stmts: vec![Statement::Assert {
                         expr: Expr::LitBool(true)
-                    }
+                    }]
                 },
                 Definition::Test {
                     name: "test 2".to_owned(),
-                    stmt: Statement::Assert {
+                    stmts: vec![Statement::Assert {
                         expr: Expr::LitBool(true)
-                    }
+                    }]
                 }
             ],
             parse(tokens)?
@@ -262,7 +281,7 @@ mod test {
         let tokens = vec![
             LeftParen,
             Test,
-            String(r#"test 1"#.to_owned()),
+            String(r#"test"#.to_owned()),
             LeftParen,
             Assert,
             LeftParen,
@@ -275,13 +294,13 @@ mod test {
         ];
         assert_eq!(
             vec![Definition::Test {
-                name: "test 1".to_owned(),
-                stmt: Statement::Assert {
+                name: "test".to_owned(),
+                stmts: vec![Statement::Assert {
                     expr: Expr::Plus {
                         left: Box::new(Expr::LitInt(1)),
                         right: Box::new(Expr::LitInt(1))
                     }
-                }
+                }]
             }],
             parse(tokens)?
         );
@@ -293,7 +312,7 @@ mod test {
         let tokens = vec![
             LeftParen,
             Test,
-            String(r#"test 1"#.to_owned()),
+            String(r#"test"#.to_owned()),
             LeftParen,
             Assert,
             LeftParen,
@@ -306,13 +325,13 @@ mod test {
         ];
         assert_eq!(
             vec![Definition::Test {
-                name: "test 1".to_owned(),
-                stmt: Statement::Assert {
+                name: "test".to_owned(),
+                stmts: vec![Statement::Assert {
                     expr: Expr::Minus {
                         left: Box::new(Expr::LitInt(1)),
                         right: Box::new(Expr::LitInt(1))
                     }
-                }
+                }]
             }],
             parse(tokens)?
         );
@@ -324,7 +343,7 @@ mod test {
         let tokens = vec![
             LeftParen,
             Test,
-            String(r#"test 1"#.to_owned()),
+            String(r#"test"#.to_owned()),
             LeftParen,
             Assert,
             LeftParen,
@@ -337,13 +356,13 @@ mod test {
         ];
         assert_eq!(
             vec![Definition::Test {
-                name: "test 1".to_owned(),
-                stmt: Statement::Assert {
+                name: "test".to_owned(),
+                stmts: vec![Statement::Assert {
                     expr: Expr::Times {
                         left: Box::new(Expr::LitInt(1)),
                         right: Box::new(Expr::LitInt(1))
                     }
-                }
+                }]
             }],
             parse(tokens)?
         );
@@ -355,7 +374,7 @@ mod test {
         let tokens = vec![
             LeftParen,
             Test,
-            String(r#"test 1"#.to_owned()),
+            String(r#"test"#.to_owned()),
             LeftParen,
             Assert,
             LeftParen,
@@ -368,13 +387,13 @@ mod test {
         ];
         assert_eq!(
             vec![Definition::Test {
-                name: "test 1".to_owned(),
-                stmt: Statement::Assert {
+                name: "test".to_owned(),
+                stmts: vec![Statement::Assert {
                     expr: Expr::Divide {
                         left: Box::new(Expr::LitInt(1)),
                         right: Box::new(Expr::LitInt(1))
                     }
-                }
+                }]
             }],
             parse(tokens)?
         );
@@ -386,7 +405,7 @@ mod test {
         let tokens = vec![
             LeftParen,
             Test,
-            String(r#"test 1"#.to_owned()),
+            String(r#"test"#.to_owned()),
             LeftParen,
             Assert,
             LeftParen,
@@ -403,8 +422,8 @@ mod test {
         ];
         assert_eq!(
             vec![Definition::Test {
-                name: "test 1".to_owned(),
-                stmt: Statement::Assert {
+                name: "test".to_owned(),
+                stmts: vec![Statement::Assert {
                     expr: Expr::Plus {
                         left: Box::new(Expr::LitInt(1)),
                         right: Box::new(Expr::Times {
@@ -412,10 +431,99 @@ mod test {
                             right: Box::new(Expr::LitInt(1))
                         })
                     }
-                }
+                }]
             }],
             parse(tokens)?
         );
+        Ok(())
+    }
+
+    #[test]
+    fn let_statement() -> Result<()> {
+        // (test "test" (let (x 1)))
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String(r#"test"#.to_owned()),
+            LeftParen,
+            Let,
+            LeftParen,
+            Ident("x".to_owned()),
+            Int(1),
+            RightParen,
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
+            vec![Definition::Test {
+                name: "test".to_owned(),
+                stmts: vec![Statement::Let {
+                    variable_name: "x".to_owned(),
+                    expr: Expr::LitInt(1)
+                }]
+            }],
+            parse(tokens)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn variable_usage() -> Result<()> {
+        // (test "test" x)
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String(r#"test"#.to_owned()),
+            LeftParen,
+            Assert,
+            Ident("x".to_owned()),
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
+            vec![Definition::Test {
+                name: "test".to_owned(),
+                stmts: vec![Statement::Assert {
+                    expr: Expr::Variable("x".to_owned())
+                }]
+            }],
+            parse(tokens)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn multiple_statements() -> Result<()> {
+        // (test "test" (assert true) (assert false))
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String("test".to_owned()),
+            LeftParen,
+            Assert,
+            Boolean(true),
+            RightParen,
+            LeftParen,
+            Assert,
+            Boolean(false),
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
+            vec![Definition::Test {
+                name: "test".to_owned(),
+                stmts: vec![
+                    Statement::Assert {
+                        expr: Expr::LitBool(true)
+                    },
+                    Statement::Assert {
+                        expr: Expr::LitBool(false)
+                    }
+                ]
+            }],
+            parse(tokens)?
+        );
+
         Ok(())
     }
 }

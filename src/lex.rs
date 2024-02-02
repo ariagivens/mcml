@@ -15,6 +15,7 @@ pub enum Token {
     Test,
     Assert,
     AssertEq,
+    Let,
     Boolean(bool),
     Int(i64),
     String(String),
@@ -28,6 +29,8 @@ impl Token {
             Token::Assert
         } else if &s == "asserteq" {
             Token::AssertEq
+        } else if &s == "let" {
+            Token::Let
         } else if &s == "true" {
             Token::Boolean(true)
         } else if &s == "false" {
@@ -51,6 +54,7 @@ impl Display for Token {
             Token::Test => write!(f, "test"),
             Token::Assert => write!(f, "assert"),
             Token::AssertEq => write!(f, "asserteq"),
+            Token::Let => write!(f, "let"),
             Token::Boolean(b) => {
                 if *b {
                     write!(f, "true")
@@ -211,6 +215,12 @@ mod test {
     #[test]
     fn arithmetic() -> Result<()> {
         assert_eq!(vec![Plus, Dash, Star, Slash], lex("+ - * /")?);
+        Ok(())
+    }
+
+    #[test]
+    fn r#let() -> Result<()> {
+        assert_eq!(vec![Let], lex("let")?);
         Ok(())
     }
 }

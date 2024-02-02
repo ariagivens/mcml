@@ -1,0 +1,3 @@
+(test "variable" (let (x 2)) (asserteq (+ x 1) 3))
+
+(test "shadowing" (let (x 2)) (let (y 3)) (let (x (+ x y))) (asserteq x 5))

@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use crate::linearize::{self, Test};
+use crate::{
+    linearize::{self, Test},
+    var::Var,
+};
 
 type Graph = petgraph::Graph<Block, (), petgraph::Directed, u32>;
 type Index = petgraph::graph::NodeIndex<u32>;
@@ -108,7 +111,7 @@ fn assign_homes_block(block: linearize::Block) -> Block {
     Block { stmts }
 }
 
-fn assign_homes_var(stacker: &mut Stacker, var: linearize::Var) -> Location {
+fn assign_homes_var(stacker: &mut Stacker, var: Var) -> Location {
     Location::Stack {
         offset: stacker.get(var.id),
     }
