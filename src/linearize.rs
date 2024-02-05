@@ -1,11 +1,5 @@
-use once_cell::sync::Lazy;
-use parking_lot::Mutex;
-use std::sync::Arc;
-
-use anyhow::Result;
-
+use crate::uniquify as prev;
 use crate::var::{Var, VarFactory};
-use crate::{uniquify as prev, var};
 
 type Graph = petgraph::Graph<Block, (), petgraph::Directed, u32>;
 type Index = petgraph::graph::NodeIndex<u32>;

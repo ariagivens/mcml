@@ -6,7 +6,6 @@ use crate::{
 };
 
 type Graph = petgraph::Graph<Block, (), petgraph::Directed, u32>;
-type Index = petgraph::graph::NodeIndex<u32>;
 
 #[derive(Debug)]
 pub struct Program {
@@ -57,7 +56,7 @@ pub enum Atom {
 pub fn assign_homes(program: linearize::Program) -> Program {
     let linearize::Program { blocks, tests } = program;
 
-    let blocks = blocks.map(|i, n| assign_homes_block(n.clone()), |i, e| *e);
+    let blocks = blocks.map(|_, n| assign_homes_block(n.clone()), |_, e| *e);
 
     Program { blocks, tests }
 }

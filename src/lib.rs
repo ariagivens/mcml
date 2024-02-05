@@ -3,6 +3,7 @@ mod datapack;
 mod lex;
 mod linearize;
 mod parse;
+mod runtime;
 mod select_commands;
 mod uniquify;
 mod utility;
