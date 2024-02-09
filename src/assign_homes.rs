@@ -1,9 +1,16 @@
-use std::collections::HashMap;
+mod uncover_live;
+mod build_interference;
+mod color_graph;
 
-use crate::{
-    linearize::{self, Test},
-    var::Var,
-};
+use crate::select_instructions::{self as prev, Op};
+use crate::linearize::Test;
+use uncover_live::uncover_live;
+use build_interference::build_interference;
+use crate::var::Var;
+use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
+
+use self::color_graph::color_graph;
 
 type Graph = petgraph::Graph<Block, (), petgraph::Directed, u32>;
 
@@ -13,133 +20,199 @@ pub struct Program {
     pub tests: Vec<Test>,
 }
 
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Block {
-    pub stmts: Vec<Statement>,
+    pub instrs: Vec<Instruction>,
 }
 
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub enum Statement {
-    Assign { location: Location, expr: Expr },
-    Assert { atom: Atom },
-    AssertEq { left: Atom, right: Atom },
-    Command { text: String },
+#[derive(Debug, Clone)]
+pub enum Instruction {
+    Set {
+        location: Location,
+        value: i64,
+    },
+    Operation {
+        op: Op,
+        source: Location,
+        destination: Location,
+    },
+    Tellraw {
+        text: String,
+    },
+    Command {
+        text: String
+    },
+    ExecuteIfScoreMatches {
+        location: Location,
+        value: i64,
+        instr: Box<Instruction>,
+    },
+    ExecuteUnlessScoreMatches {
+        location: Location,
+        value: i64,
+        instr: Box<Instruction>,
+    },
+    ExecuteIfScoreEquals {
+        a: Location,
+        b: Location,
+        instr: Box<Instruction>,
+    },
+    ExecuteUnlessScoreEquals {
+        a: Location,
+        b: Location,
+        instr: Box<Instruction>,
+    },
 }
 
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub enum Location {
-    Stack { offset: usize },
+    Register(Register),
+    Stack { offset: u32 },
 }
 
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub enum Expr {
-    Atom(Atom),
-    Plus(Binary),
-    Minus(Binary),
-    Times(Binary),
-    Divide(Binary),
-}
-
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub struct Binary {
-    pub left: Atom,
-    pub right: Atom,
-}
-
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub enum Atom {
-    Location(Location),
-    LitInt(i64),
-    LitBool(bool),
-}
-
-pub fn assign_homes(program: linearize::Program) -> Program {
-    let linearize::Program { blocks, tests } = program;
-
-    let blocks = blocks.map(|_, n| assign_homes_block(n.clone()), |_, e| *e);
-
-    Program { blocks, tests }
-}
-
-struct Stacker {
-    map: HashMap<u32, usize>,
-    highest: usize,
-}
-
-impl Stacker {
-    fn new() -> Self {
-        Stacker {
-            map: HashMap::new(),
-            highest: 0,
-        }
-    }
-
-    fn get(&mut self, id: u32) -> usize {
-        match self.map.get(&id) {
-            Some(v) => *v,
-            None => {
-                self.highest += 1;
-                self.map.insert(id, self.highest);
-                self.highest
-            }
+impl Location {
+    pub fn from_color(color: u32) -> Self {
+        match color {
+            0 => Location::Register(Register::R1),
+            1 => Location::Register(Register::R2),
+            2 => Location::Register(Register::R3),
+            3 => Location::Register(Register::R4),
+            4 => Location::Register(Register::R5),
+            5 => Location::Register(Register::R6),
+            6 => Location::Register(Register::R7),
+            7 => Location::Register(Register::R8),
+            8 => Location::Register(Register::E1),
+            9 => Location::Register(Register::E2),
+            10 => Location::Register(Register::E3),
+            11 => Location::Register(Register::E4),
+            12 => Location::Register(Register::E5),
+            13 => Location::Register(Register::E6),
+            14 => Location::Register(Register::E7),
+            15 => Location::Register(Register::E8),
+            n => Location::Stack { offset: n - 15 }
         }
     }
 }
 
-fn assign_homes_block(block: linearize::Block) -> Block {
-    let mut stacker = Stacker::new();
-
-    let mut stmts = Vec::new();
-    for stmt in block.stmts {
-        stmts.push(match stmt {
-            linearize::Statement::Assign { var, expr } => Statement::Assign {
-                location: assign_homes_var(&mut stacker, var),
-                expr: assign_homes_expr(&mut stacker, expr),
-            },
-            linearize::Statement::Assert { atom } => Statement::Assert {
-                atom: assign_homes_atom(&mut stacker, atom),
-            },
-            linearize::Statement::AssertEq { left, right } => Statement::AssertEq {
-                left: assign_homes_atom(&mut stacker, left),
-                right: assign_homes_atom(&mut stacker, right),
-            },
-            linearize::Statement::Command { text } => Statement::Command { text },
-        });
-    }
-
-    Block { stmts }
+#[derive(Debug, Clone)]
+pub enum Register {
+    R1,
+    R2,
+    R3,
+    R4,
+    R5,
+    R6,
+    R7,
+    R8,
+    E1,
+    E2,
+    E3,
+    E4,
+    E5,
+    E6,
+    E7,
+    E8
 }
 
-fn assign_homes_var(stacker: &mut Stacker, var: Var) -> Location {
-    Location::Stack {
-        offset: stacker.get(var.id),
-    }
-}
-
-fn assign_homes_atom(stacker: &mut Stacker, atom: linearize::Atom) -> Atom {
-    match atom {
-        linearize::Atom::Var(var) => Atom::Location(assign_homes_var(stacker, var)),
-        linearize::Atom::LitInt(i) => Atom::LitInt(i),
-        linearize::Atom::LitBool(b) => Atom::LitBool(b),
-    }
-}
-
-fn assign_homes_expr(stacker: &mut Stacker, expr: linearize::Expr) -> Expr {
-    match expr {
-        linearize::Expr::Atom(atom) => Expr::Atom(assign_homes_atom(stacker, atom)),
-        linearize::Expr::Plus(b) => Expr::Plus(assign_homes_binary(stacker, b)),
-        linearize::Expr::Minus(b) => Expr::Minus(assign_homes_binary(stacker, b)),
-        linearize::Expr::Times(b) => Expr::Times(assign_homes_binary(stacker, b)),
-        linearize::Expr::Divide(b) => Expr::Divide(assign_homes_binary(stacker, b)),
+impl Register {
+    fn to_color(&self) -> u32 {
+        match self {
+            Register::R1 => 0,
+            Register::R2 => 1,
+            Register::R3 => 2,
+            Register::R4 => 3,
+            Register::R5 => 4,
+            Register::R6 => 5,
+            Register::R7 => 6,
+            Register::R8 => 7,
+            Register::E1 => 8,
+            Register::E2 => 9,
+            Register::E3 => 10,
+            Register::E4 => 11,
+            Register::E5 => 12,
+            Register::E6 => 13,
+            Register::E7 => 14,
+            Register::E8 => 15,
+        }
     }
 }
 
-fn assign_homes_binary(
-    stacker: &mut Stacker,
-    linearize::Binary { left, right }: linearize::Binary,
-) -> Binary {
-    Binary {
-        left: assign_homes_atom(stacker, left),
-        right: assign_homes_atom(stacker, right),
+impl Display for Register {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            Register::R1 => "r1",
+            Register::R2 => "r2",
+            Register::R3 => "r3",
+            Register::R4 => "r4",
+            Register::R5 => "r5",
+            Register::R6 => "r6",
+            Register::R7 => "r7",
+            Register::R8 => "r8",
+            Register::E1 => "e1",
+            Register::E2 => "e2",
+            Register::E3 => "e3",
+            Register::E4 => "e4",
+            Register::E5 => "e5",
+            Register::E6 => "e6",
+            Register::E7 => "e7",
+            Register::E8 => "e8",
+        })
+    }
+}
+
+pub fn assign_homes(program: prev::Program) -> Program {
+    let annotated_program = uncover_live(&program);
+    let interference_graph = build_interference(&annotated_program);
+    let color_map = color_graph(interference_graph);
+    let location_map: HashMap<Var, Location> = color_map.iter().map(|(var, color)| (var.clone(), Location::from_color(*color))).collect();
+
+    assign_homes_program(program, &location_map)
+}
+
+fn assign_homes_program(program: prev::Program, location_map: &HashMap<Var, Location>) -> Program {
+    let blocks = program.blocks.map(|_, n| assign_homes_block(n.clone(), location_map), |_, e| *e);
+    Program { blocks, tests: program.tests }
+}
+
+fn assign_homes_block(block: prev::Block, location_map: &HashMap<Var, Location>) -> Block {
+    Block { instrs: block.instrs.iter().map(|instr| assign_homes_instr(instr.clone(), location_map)).collect() }
+}
+
+fn assign_homes_instr(instr: prev::Instruction, location_map: &HashMap<Var, Location>) -> Instruction {
+    match instr {
+        prev::Instruction::Set { var, value } => Instruction::Set { location: location_map[&var].clone(), value },
+        prev::Instruction::Operation { op, source, destination } => Instruction::Operation { op, source: location_map[&source].clone(), destination: location_map[&destination].clone() },
+        prev::Instruction::Tellraw { text } => Instruction::Tellraw { text },
+        prev::Instruction::Command { text } => Instruction::Command { text },
+        prev::Instruction::ExecuteIfScoreMatches { var, value, instr } => Instruction::ExecuteIfScoreMatches { location: location_map[&var].clone(), value, instr: Box::new(assign_homes_instr(*instr, location_map)) },
+        prev::Instruction::ExecuteUnlessScoreMatches { var, value, instr } => Instruction::ExecuteUnlessScoreMatches { location: location_map[&var].clone(), value, instr: Box::new(assign_homes_instr(*instr, location_map)) },
+        prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => Instruction::ExecuteIfScoreEquals { a: location_map[&a].clone(), b: location_map[&b].clone(), instr: Box::new(assign_homes_instr(*instr, location_map)) },
+        prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => Instruction::ExecuteUnlessScoreEquals { a: location_map[&a].clone(), b: location_map[&b].clone(), instr: Box::new(assign_homes_instr(*instr, location_map)) },
+    }
+}
+
+fn write_set(instr: &prev::Instruction) -> HashSet<Var> {
+    match instr {
+        prev::Instruction::Set { var, value } => HashSet::from([var.clone()]),
+        prev::Instruction::Operation { op, source, destination } => HashSet::from([destination.clone()]),
+        prev::Instruction::Tellraw { text } => HashSet::new(),
+        prev::Instruction::Command { text } => HashSet::new(),
+        prev::Instruction::ExecuteIfScoreMatches { var, value, instr } => write_set(instr),
+        prev::Instruction::ExecuteUnlessScoreMatches { var, value, instr } => write_set(instr),
+        prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => write_set(instr),
+        prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => write_set(instr),
+    }
+}
+
+fn read_set(instr: &prev::Instruction) -> HashSet<Var> {
+    match instr {
+        prev::Instruction::Set { var, value } => HashSet::new(),
+        prev::Instruction::Operation { op, source, destination } => HashSet::from([source.clone(), destination.clone()]),
+        prev::Instruction::Tellraw { text } => HashSet::new(),
+        prev::Instruction::Command { text } => HashSet::new(),
+        prev::Instruction::ExecuteIfScoreMatches { var, value, instr } => HashSet::from([var.clone()]).union(&read_set(instr)).cloned().collect(),
+        prev::Instruction::ExecuteUnlessScoreMatches { var, value, instr } => HashSet::from([var.clone()]).union(&read_set(instr)).cloned().collect(),
+        prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => HashSet::from([a.clone(), b.clone()]).union(&read_set(instr)).cloned().collect(),
+        prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => HashSet::from([a.clone(), b.clone()]).union(&read_set(instr)).cloned().collect(),
     }
 }

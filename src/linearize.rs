@@ -4,10 +4,10 @@ use crate::var::{Var, VarFactory};
 type Graph = petgraph::Graph<Block, (), petgraph::Directed, u32>;
 type Index = petgraph::graph::NodeIndex<u32>;
 
-#[derive(Debug)]
 pub struct Program {
     pub blocks: Graph,
     pub tests: Vec<Test>,
+    pub var_factory: VarFactory,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -26,16 +26,7 @@ pub enum Statement {
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Expr {
     Atom(Atom),
-    Plus(Binary),
-    Minus(Binary),
-    Times(Binary),
-    Divide(Binary),
-}
-
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub struct Binary {
-    pub left: Atom,
-    pub right: Atom,
+    Binary { op: Op, left: Atom, right: Atom },
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -45,7 +36,15 @@ pub enum Atom {
     LitBool(bool),
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub enum Op {
+    Plus,
+    Minus,
+    Times,
+    Divide,
+}
+
+#[derive(Debug, Clone)]
 pub struct Test {
     pub name: String,
     pub block: Index,
@@ -69,7 +68,11 @@ pub fn linearize(
         });
     }
 
-    Program { blocks, tests }
+    Program {
+        blocks,
+        tests,
+        var_factory,
+    }
 }
 
 fn linearize_stmts(
@@ -123,24 +126,22 @@ fn linearize_expr(var_factory: &mut VarFactory, expr: prev::Expr) -> (Atom, Vec<
         prev::Expr::LitBool(b) => (Atom::LitBool(b), vec![]),
         prev::Expr::LitInt(i) => (Atom::LitInt(i), vec![]),
         prev::Expr::Variable(x) => (Atom::Var(x), vec![]),
-        prev::Expr::Plus { left, right } => {
-            linearize_binary(var_factory, Expr::Plus, *left, *right)
-        }
+        prev::Expr::Plus { left, right } => linearize_binary(var_factory, Op::Plus, *left, *right),
         prev::Expr::Minus { left, right } => {
-            linearize_binary(var_factory, Expr::Minus, *left, *right)
+            linearize_binary(var_factory, Op::Minus, *left, *right)
         }
         prev::Expr::Times { left, right } => {
-            linearize_binary(var_factory, Expr::Times, *left, *right)
+            linearize_binary(var_factory, Op::Times, *left, *right)
         }
         prev::Expr::Divide { left, right } => {
-            linearize_binary(var_factory, Expr::Divide, *left, *right)
+            linearize_binary(var_factory, Op::Divide, *left, *right)
         }
     }
 }
 
 fn linearize_binary(
     var_factory: &mut VarFactory,
-    op: impl Fn(Binary) -> Expr,
+    op: Op,
     left: prev::Expr,
     right: prev::Expr,
 ) -> (Atom, Vec<Statement>) {
@@ -151,7 +152,7 @@ fn linearize_binary(
     let var = var_factory.tmp();
     stmts.push(Statement::Assign {
         var: var.clone(),
-        expr: op(Binary { left, right }),
+        expr: Expr::Binary { left, right, op },
     });
 
     (Atom::Var(var), stmts)
@@ -270,7 +271,12 @@ mod test {
         // tmp1 = (- 2 3)
         let tmp1 = if let Statement::Assign {
             var: tmp1,
-            expr: Expr::Minus(Binary { left, right }),
+            expr:
+                Expr::Binary {
+                    left,
+                    right,
+                    op: Op::Minus,
+                },
         } = &stmts[0]
         {
             assert_eq!(left, &Atom::LitInt(2));
@@ -283,7 +289,12 @@ mod test {
         // tmp2 = (* 1 tmp1)
         let tmp2 = if let Statement::Assign {
             var: tmp2,
-            expr: Expr::Times(Binary { left, right }),
+            expr:
+                Expr::Binary {
+                    left,
+                    right,
+                    op: Op::Times,
+                },
         } = &stmts[1]
         {
             assert_eq!(left, &Atom::LitInt(1));
@@ -296,7 +307,12 @@ mod test {
         // tmp3 = (/ 4 5)
         let tmp3 = if let Statement::Assign {
             var: tmp3,
-            expr: Expr::Divide(Binary { left, right }),
+            expr:
+                Expr::Binary {
+                    left,
+                    right,
+                    op: Op::Divide,
+                },
         } = &stmts[2]
         {
             assert_eq!(left, &Atom::LitInt(4));
@@ -309,7 +325,12 @@ mod test {
         // tmp4 = (+ tmp2 tmp3)
         let tmp4 = if let Statement::Assign {
             var: tmp4,
-            expr: Expr::Plus(Binary { left, right }),
+            expr:
+                Expr::Binary {
+                    left,
+                    right,
+                    op: Op::Plus,
+                },
         } = &stmts[3]
         {
             assert_eq!(left, &Atom::Var(tmp2));
@@ -372,7 +393,12 @@ mod test {
         // tmp1 = (+ x 1)
         let tmp1 = if let Statement::Assign {
             var: tmp1,
-            expr: Expr::Plus(Binary { left, right }),
+            expr:
+                Expr::Binary {
+                    left,
+                    right,
+                    op: Op::Plus,
+                },
         } = &stmts[1]
         {
             assert_eq!(left, &Atom::Var(x));
