@@ -66,7 +66,7 @@ pub enum Instruction {
 pub enum Location {
     Register(Register),
     StackItem,
-    Scratch
+    Scratch,
 }
 
 impl Display for Location {
@@ -119,6 +119,11 @@ fn reify_location_instr(instr: prev::Instruction) -> Vec<Instruction> {
             Instruction::Push { offset },
         ],
         prev::Instruction::Operation {
+            op: Op::Equals,
+            source,
+            destination,
+        } if source == destination => vec![],
+        prev::Instruction::Operation {
             op,
             source: prev::Location::Register(source),
             destination: prev::Location::Register(destination),
@@ -132,18 +137,19 @@ fn reify_location_instr(instr: prev::Instruction) -> Vec<Instruction> {
             source: prev::Location::Stack { offset },
             destination: prev::Location::Register(destination),
         } => vec![
-            Instruction::Pop { offset },    
+            Instruction::Pop { offset },
             Instruction::Operation {
                 op,
                 source: Location::StackItem,
                 destination: Location::Register(destination),
-        }],
+            },
+        ],
         prev::Instruction::Operation {
             op,
             source: prev::Location::Register(source),
             destination: prev::Location::Stack { offset },
         } => vec![
-            Instruction::Pop { offset },    
+            Instruction::Pop { offset },
             Instruction::Operation {
                 op,
                 source: Location::Register(source),
@@ -153,22 +159,33 @@ fn reify_location_instr(instr: prev::Instruction) -> Vec<Instruction> {
         ],
         prev::Instruction::Operation {
             op,
-            source: prev::Location::Stack { offset: source_offset },
-            destination: prev::Location::Stack { offset: destination_offset },
+            source: prev::Location::Stack {
+                offset: source_offset,
+            },
+            destination:
+                prev::Location::Stack {
+                    offset: destination_offset,
+                },
         } => vec![
-            Instruction::Pop { offset: source_offset },
+            Instruction::Pop {
+                offset: source_offset,
+            },
             Instruction::Operation {
                 op: Op::Equals,
                 source: Location::StackItem,
-                destination: Location::Scratch
+                destination: Location::Scratch,
             },
-            Instruction::Pop { offset: destination_offset },
+            Instruction::Pop {
+                offset: destination_offset,
+            },
             Instruction::Operation {
                 op,
                 source: Location::Scratch,
                 destination: Location::StackItem,
             },
-            Instruction::Push { offset: destination_offset },
+            Instruction::Push {
+                offset: destination_offset,
+            },
         ],
         prev::Instruction::Tellraw { text } => vec![Instruction::Tellraw { text }],
         prev::Instruction::Command { text } => vec![Instruction::Command { text }],
@@ -176,43 +193,68 @@ fn reify_location_instr(instr: prev::Instruction) -> Vec<Instruction> {
             location: prev::Location::Register(r),
             value,
             instr,
-        } =>
+        } => {
             if let prev::Instruction::Tellraw { text } = *instr {
-                vec![ Instruction::ExecuteIfScoreMatches { location: Location::Register(r), value, instr: Box::new(Instruction::Tellraw { text }) } ]
+                vec![Instruction::ExecuteIfScoreMatches {
+                    location: Location::Register(r),
+                    value,
+                    instr: Box::new(Instruction::Tellraw { text }),
+                }]
             } else {
                 panic!("Non-tellraw execute-ifs not supported yet.");
-            },
+            }
+        }
         prev::Instruction::ExecuteIfScoreMatches {
-                location: prev::Location::Stack { offset },
-                value,
-                instr,
-            } =>
-                if let prev::Instruction::Tellraw { text } = *instr {
-                    vec![ Instruction::Pop { offset },
-                        Instruction::ExecuteIfScoreMatches { location: Location::StackItem, value, instr: Box::new(Instruction::Tellraw { text }) } ]
-                } else {
-                    panic!("Non-tellraw execute-ifs not supported yet.");
-                },
+            location: prev::Location::Stack { offset },
+            value,
+            instr,
+        } => {
+            if let prev::Instruction::Tellraw { text } = *instr {
+                vec![
+                    Instruction::Pop { offset },
+                    Instruction::ExecuteIfScoreMatches {
+                        location: Location::StackItem,
+                        value,
+                        instr: Box::new(Instruction::Tellraw { text }),
+                    },
+                ]
+            } else {
+                panic!("Non-tellraw execute-ifs not supported yet.");
+            }
+        }
         prev::Instruction::ExecuteUnlessScoreMatches {
             location: prev::Location::Register(r),
             value,
             instr,
-        } => if let prev::Instruction::Tellraw { text } = *instr {
-            vec![ Instruction::ExecuteUnlessScoreMatches { location: Location::Register(r), value, instr: Box::new(Instruction::Tellraw { text }) } ]
-        } else {
-            panic!("Non-tellraw execute-ifs not supported yet.");
-        },
+        } => {
+            if let prev::Instruction::Tellraw { text } = *instr {
+                vec![Instruction::ExecuteUnlessScoreMatches {
+                    location: Location::Register(r),
+                    value,
+                    instr: Box::new(Instruction::Tellraw { text }),
+                }]
+            } else {
+                panic!("Non-tellraw execute-ifs not supported yet.");
+            }
+        }
         prev::Instruction::ExecuteUnlessScoreMatches {
             location: prev::Location::Stack { offset },
             value,
             instr,
-        } =>
+        } => {
             if let prev::Instruction::Tellraw { text } = *instr {
-                vec![ Instruction::Pop { offset },
-                    Instruction::ExecuteUnlessScoreMatches { location: Location::StackItem, value, instr: Box::new(Instruction::Tellraw { text }) } ]
+                vec![
+                    Instruction::Pop { offset },
+                    Instruction::ExecuteUnlessScoreMatches {
+                        location: Location::StackItem,
+                        value,
+                        instr: Box::new(Instruction::Tellraw { text }),
+                    },
+                ]
             } else {
                 panic!("Non-tellraw execute-ifs not supported yet.");
-            },
+            }
+        }
         prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => todo!(),
         prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => todo!(),
     }

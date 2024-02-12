@@ -1,14 +1,16 @@
-mod uncover_live;
 mod build_interference;
+mod build_move;
 mod color_graph;
+mod uncover_live;
 
-use crate::select_instructions::{self as prev, Op};
 use crate::linearize::Test;
-use uncover_live::uncover_live;
-use build_interference::build_interference;
+use crate::select_instructions::{self as prev, Op};
 use crate::var::Var;
+use build_interference::build_interference;
+use build_move::build_move;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
+use uncover_live::uncover_live;
 
 use self::color_graph::color_graph;
 
@@ -40,7 +42,7 @@ pub enum Instruction {
         text: String,
     },
     Command {
-        text: String
+        text: String,
     },
     ExecuteIfScoreMatches {
         location: Location,
@@ -64,7 +66,7 @@ pub enum Instruction {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Location {
     Register(Register),
     Stack { offset: u32 },
@@ -89,12 +91,12 @@ impl Location {
             13 => Location::Register(Register::E6),
             14 => Location::Register(Register::E7),
             15 => Location::Register(Register::E8),
-            n => Location::Stack { offset: n - 15 }
+            n => Location::Stack { offset: n - 15 },
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Register {
     R1,
     R2,
@@ -111,7 +113,7 @@ pub enum Register {
     E5,
     E6,
     E7,
-    E8
+    E8,
 }
 
 impl Register {
@@ -139,62 +141,124 @@ impl Register {
 
 impl Display for Register {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            Register::R1 => "r1",
-            Register::R2 => "r2",
-            Register::R3 => "r3",
-            Register::R4 => "r4",
-            Register::R5 => "r5",
-            Register::R6 => "r6",
-            Register::R7 => "r7",
-            Register::R8 => "r8",
-            Register::E1 => "e1",
-            Register::E2 => "e2",
-            Register::E3 => "e3",
-            Register::E4 => "e4",
-            Register::E5 => "e5",
-            Register::E6 => "e6",
-            Register::E7 => "e7",
-            Register::E8 => "e8",
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Register::R1 => "r1",
+                Register::R2 => "r2",
+                Register::R3 => "r3",
+                Register::R4 => "r4",
+                Register::R5 => "r5",
+                Register::R6 => "r6",
+                Register::R7 => "r7",
+                Register::R8 => "r8",
+                Register::E1 => "e1",
+                Register::E2 => "e2",
+                Register::E3 => "e3",
+                Register::E4 => "e4",
+                Register::E5 => "e5",
+                Register::E6 => "e6",
+                Register::E7 => "e7",
+                Register::E8 => "e8",
+            }
+        )
     }
 }
 
 pub fn assign_homes(program: prev::Program) -> Program {
+    let move_graph = build_move(&program);
     let annotated_program = uncover_live(&program);
     let interference_graph = build_interference(&annotated_program);
-    let color_map = color_graph(interference_graph);
-    let location_map: HashMap<Var, Location> = color_map.iter().map(|(var, color)| (var.clone(), Location::from_color(*color))).collect();
+    let color_map = color_graph(interference_graph, &move_graph);
+    let location_map: HashMap<Var, Location> = color_map
+        .iter()
+        .map(|(var, color)| (var.clone(), Location::from_color(*color)))
+        .collect();
 
     assign_homes_program(program, &location_map)
 }
 
 fn assign_homes_program(program: prev::Program, location_map: &HashMap<Var, Location>) -> Program {
-    let blocks = program.blocks.map(|_, n| assign_homes_block(n.clone(), location_map), |_, e| *e);
-    Program { blocks, tests: program.tests }
+    let blocks = program.blocks.map(
+        |_, n| assign_homes_block(n.clone(), location_map),
+        |_, e| *e,
+    );
+    Program {
+        blocks,
+        tests: program.tests,
+    }
 }
 
 fn assign_homes_block(block: prev::Block, location_map: &HashMap<Var, Location>) -> Block {
-    Block { instrs: block.instrs.iter().map(|instr| assign_homes_instr(instr.clone(), location_map)).collect() }
+    Block {
+        instrs: block
+            .instrs
+            .iter()
+            .map(|instr| assign_homes_instr(instr.clone(), location_map))
+            .collect(),
+    }
 }
 
-fn assign_homes_instr(instr: prev::Instruction, location_map: &HashMap<Var, Location>) -> Instruction {
+fn assign_homes_instr(
+    instr: prev::Instruction,
+    location_map: &HashMap<Var, Location>,
+) -> Instruction {
     match instr {
-        prev::Instruction::Set { var, value } => Instruction::Set { location: location_map[&var].clone(), value },
-        prev::Instruction::Operation { op, source, destination } => Instruction::Operation { op, source: location_map[&source].clone(), destination: location_map[&destination].clone() },
+        prev::Instruction::Set { var, value } => Instruction::Set {
+            location: location_map[&var].clone(),
+            value,
+        },
+        prev::Instruction::Operation {
+            op,
+            source,
+            destination,
+        } => Instruction::Operation {
+            op,
+            source: location_map[&source].clone(),
+            destination: location_map[&destination].clone(),
+        },
         prev::Instruction::Tellraw { text } => Instruction::Tellraw { text },
         prev::Instruction::Command { text } => Instruction::Command { text },
-        prev::Instruction::ExecuteIfScoreMatches { var, value, instr } => Instruction::ExecuteIfScoreMatches { location: location_map[&var].clone(), value, instr: Box::new(assign_homes_instr(*instr, location_map)) },
-        prev::Instruction::ExecuteUnlessScoreMatches { var, value, instr } => Instruction::ExecuteUnlessScoreMatches { location: location_map[&var].clone(), value, instr: Box::new(assign_homes_instr(*instr, location_map)) },
-        prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => Instruction::ExecuteIfScoreEquals { a: location_map[&a].clone(), b: location_map[&b].clone(), instr: Box::new(assign_homes_instr(*instr, location_map)) },
-        prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => Instruction::ExecuteUnlessScoreEquals { a: location_map[&a].clone(), b: location_map[&b].clone(), instr: Box::new(assign_homes_instr(*instr, location_map)) },
+        prev::Instruction::ExecuteIfScoreMatches { var, value, instr } => {
+            Instruction::ExecuteIfScoreMatches {
+                location: location_map[&var].clone(),
+                value,
+                instr: Box::new(assign_homes_instr(*instr, location_map)),
+            }
+        }
+        prev::Instruction::ExecuteUnlessScoreMatches { var, value, instr } => {
+            Instruction::ExecuteUnlessScoreMatches {
+                location: location_map[&var].clone(),
+                value,
+                instr: Box::new(assign_homes_instr(*instr, location_map)),
+            }
+        }
+        prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => {
+            Instruction::ExecuteIfScoreEquals {
+                a: location_map[&a].clone(),
+                b: location_map[&b].clone(),
+                instr: Box::new(assign_homes_instr(*instr, location_map)),
+            }
+        }
+        prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => {
+            Instruction::ExecuteUnlessScoreEquals {
+                a: location_map[&a].clone(),
+                b: location_map[&b].clone(),
+                instr: Box::new(assign_homes_instr(*instr, location_map)),
+            }
+        }
     }
 }
 
 fn write_set(instr: &prev::Instruction) -> HashSet<Var> {
     match instr {
         prev::Instruction::Set { var, value } => HashSet::from([var.clone()]),
-        prev::Instruction::Operation { op, source, destination } => HashSet::from([destination.clone()]),
+        prev::Instruction::Operation {
+            op,
+            source,
+            destination,
+        } => HashSet::from([destination.clone()]),
         prev::Instruction::Tellraw { text } => HashSet::new(),
         prev::Instruction::Command { text } => HashSet::new(),
         prev::Instruction::ExecuteIfScoreMatches { var, value, instr } => write_set(instr),
@@ -207,12 +271,41 @@ fn write_set(instr: &prev::Instruction) -> HashSet<Var> {
 fn read_set(instr: &prev::Instruction) -> HashSet<Var> {
     match instr {
         prev::Instruction::Set { var, value } => HashSet::new(),
-        prev::Instruction::Operation { op, source, destination } => HashSet::from([source.clone(), destination.clone()]),
+        prev::Instruction::Operation {
+            op: Op::Equals,
+            source,
+            destination,
+        } => HashSet::from([source.clone()]),
+        prev::Instruction::Operation {
+            op,
+            source,
+            destination,
+        } => HashSet::from([source.clone(), destination.clone()]),
         prev::Instruction::Tellraw { text } => HashSet::new(),
         prev::Instruction::Command { text } => HashSet::new(),
-        prev::Instruction::ExecuteIfScoreMatches { var, value, instr } => HashSet::from([var.clone()]).union(&read_set(instr)).cloned().collect(),
-        prev::Instruction::ExecuteUnlessScoreMatches { var, value, instr } => HashSet::from([var.clone()]).union(&read_set(instr)).cloned().collect(),
-        prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => HashSet::from([a.clone(), b.clone()]).union(&read_set(instr)).cloned().collect(),
-        prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => HashSet::from([a.clone(), b.clone()]).union(&read_set(instr)).cloned().collect(),
+        prev::Instruction::ExecuteIfScoreMatches { var, value, instr } => {
+            HashSet::from([var.clone()])
+                .union(&read_set(instr))
+                .cloned()
+                .collect()
+        }
+        prev::Instruction::ExecuteUnlessScoreMatches { var, value, instr } => {
+            HashSet::from([var.clone()])
+                .union(&read_set(instr))
+                .cloned()
+                .collect()
+        }
+        prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => {
+            HashSet::from([a.clone(), b.clone()])
+                .union(&read_set(instr))
+                .cloned()
+                .collect()
+        }
+        prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => {
+            HashSet::from([a.clone(), b.clone()])
+                .union(&read_set(instr))
+                .cloned()
+                .collect()
+        }
     }
 }

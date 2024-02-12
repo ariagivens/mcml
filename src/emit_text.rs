@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use crate::reify_locations::{self as prev};
 use crate::datapack::Function;
+use crate::reify_locations::{self as prev};
 use crate::runtime::{setup_runtime, Runtime};
 use crate::utility::escape;
 
@@ -46,27 +46,38 @@ fn emit_text_block(block: prev::Block) -> String {
 
 fn emit_text_instr(instr: prev::Instruction) -> String {
     match instr {
-        prev::Instruction::Set { location, value } =>
-            format!("scoreboard players set {location} {value}\n"),
+        prev::Instruction::Set { location, value } => {
+            format!("scoreboard players set {location} {value}\n")
+        }
         prev::Instruction::Operation {
             op,
             source,
             destination,
         } => format!("scoreboard players operation {destination} {op} {source}\n"),
-        prev::Instruction::Push { offset } => format!("scoreboard players set offset stack {offset}\nfunction mctest:push\n"),
-        prev::Instruction::Pop { offset } => format!("scoreboard players set offset stack {offset}\nfunction mctest:pop\n"),
+        prev::Instruction::Push { offset } => {
+            format!("scoreboard players set offset stack {offset}\nfunction mctest:push\n")
+        }
+        prev::Instruction::Pop { offset } => {
+            format!("scoreboard players set offset stack {offset}\nfunction mctest:pop\n")
+        }
         prev::Instruction::Tellraw { text } => format!("tellraw @s \"{}\"\n", escape(&text)),
         prev::Instruction::Command { text } => format!("{text}\n"),
         prev::Instruction::ExecuteIfScoreMatches {
             location,
             value,
             instr,
-        } => format!("execute if score {location} matches {value} run {}", emit_text_instr(*instr)),
+        } => format!(
+            "execute if score {location} matches {value} run {}",
+            emit_text_instr(*instr)
+        ),
         prev::Instruction::ExecuteUnlessScoreMatches {
             location,
             value,
             instr,
-        } => format!("execute unless score {location} matches {value} run {}", emit_text_instr(*instr)),
+        } => format!(
+            "execute unless score {location} matches {value} run {}",
+            emit_text_instr(*instr)
+        ),
         prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => todo!(),
         prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => todo!(),
     }

@@ -66,13 +66,17 @@ pub enum Op {
 
 impl Display for Op {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            Op::Equals => "=",
-            Op::PlusEquals => "+=",
-            Op::MinusEquals => "-=",
-            Op::TimesEquals => "*=",
-            Op::DivideEquals => "/=",
-        })
+        write!(
+            f,
+            "{}",
+            match self {
+                Op::Equals => "=",
+                Op::PlusEquals => "+=",
+                Op::MinusEquals => "-=",
+                Op::TimesEquals => "*=",
+                Op::DivideEquals => "/=",
+            }
+        )
     }
 }
 

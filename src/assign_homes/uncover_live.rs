@@ -26,15 +26,6 @@ pub struct AnnotatedInstruction {
     pub live_after: HashSet<Var>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Op {
-    Equals,
-    PlusEquals,
-    MinusEquals,
-    TimesEquals,
-    DivideEquals,
-}
-
 pub fn uncover_live(program: &prev::Program) -> Program {
     let blocks = program
         .blocks
