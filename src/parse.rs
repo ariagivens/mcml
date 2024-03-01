@@ -20,10 +20,31 @@ pub enum Expr {
     LitBool(bool),
     LitInt(i64),
     Variable(String),
-    Plus { left: Box<Expr>, right: Box<Expr> },
-    Minus { left: Box<Expr>, right: Box<Expr> },
-    Times { left: Box<Expr>, right: Box<Expr> },
-    Divide { left: Box<Expr>, right: Box<Expr> },
+    Plus {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    Minus {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    Times {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    Divide {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    If {
+        cond: Box<Expr>,
+        thn: Box<Expr>,
+        els: Box<Expr>,
+    },
+    Eq {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    }
 }
 
 struct Tokens {
@@ -148,6 +169,15 @@ fn parse_arithmetic(tokens: &mut Tokens) -> Result<Expr> {
             right: Box::new(parse_expr(tokens)?),
         },
         Token::Slash => Expr::Divide {
+            left: Box::new(parse_expr(tokens)?),
+            right: Box::new(parse_expr(tokens)?),
+        },
+        Token::If => Expr::If {
+            cond: Box::new(parse_expr(tokens)?),
+            thn: Box::new(parse_expr(tokens)?),
+            els: Box::new(parse_expr(tokens)?),
+        },
+        Token::DoubleEquals => Expr::Eq {
             left: Box::new(parse_expr(tokens)?),
             right: Box::new(parse_expr(tokens)?),
         },
@@ -524,6 +554,71 @@ mod test {
             parse(tokens)?
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn if_expr() -> Result<()> {
+        // (test "test" (let (x 1)))
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String(r#"test"#.to_owned()),
+            LeftParen,
+            Assert,
+            LeftParen,
+            If,
+            Boolean(true),
+            Boolean(false),
+            Boolean(true),
+            RightParen,
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
+            vec![Definition::Test {
+                name: "test".to_owned(),
+                stmts: vec![Statement::Assert {
+                    expr: Expr::If {
+                        cond: Box::new(Expr::LitBool(true)),
+                        thn: Box::new(Expr::LitBool(false)),
+                        els: Box::new(Expr::LitBool(true))
+                    }
+                }]
+            }],
+            parse(tokens)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn eq() -> Result<()> {
+        let tokens = vec![
+            LeftParen,
+            Test,
+            String(r#"test"#.to_owned()),
+            LeftParen,
+            Assert,
+            LeftParen,
+            DoubleEquals,
+            Int(1),
+            Int(1),
+            RightParen,
+            RightParen,
+            RightParen,
+        ];
+        assert_eq!(
+            vec![Definition::Test {
+                name: "test".to_owned(),
+                stmts: vec![Statement::Assert {
+                    expr: Expr::Eq {
+                        left: Box::new(Expr::LitInt(1)),
+                        right: Box::new(Expr::LitInt(1))
+                    }
+                }]
+            }],
+            parse(tokens)?
+        );
         Ok(())
     }
 }

@@ -1,0 +1,6 @@
+(test "if"
+  (asserteq (if true 1 2) 1)
+  (asserteq (if false 1 2) 2))
+
+(test "eq"
+  (assert (== 1 1)))

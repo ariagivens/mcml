@@ -11,11 +11,13 @@ pub enum Token {
     Dash,
     Star,
     Slash,
+    DoubleEquals,
     Ident(String),
     Test,
     Assert,
     AssertEq,
     Let,
+    If,
     Boolean(bool),
     Int(i64),
     String(String),
@@ -31,6 +33,8 @@ impl Token {
             Token::AssertEq
         } else if &s == "let" {
             Token::Let
+        } else if &s == "if" {
+            Token::If
         } else if &s == "true" {
             Token::Boolean(true)
         } else if &s == "false" {
@@ -50,11 +54,13 @@ impl Display for Token {
             Token::Dash => write!(f, "-"),
             Token::Star => write!(f, "*"),
             Token::Slash => write!(f, "/"),
+            Token::DoubleEquals => write!(f, "=="),
             Token::Ident(i) => write!(f, "{}", i),
             Token::Test => write!(f, "test"),
             Token::Assert => write!(f, "assert"),
             Token::AssertEq => write!(f, "asserteq"),
             Token::Let => write!(f, "let"),
+            Token::If => write!(f, "if"),
             Token::Boolean(b) => {
                 if *b {
                     write!(f, "true")
@@ -106,6 +112,9 @@ pub fn lex(source: &str) -> Result<Vec<Token>> {
             tokens.push(Token::Star);
         } else if c == '/' {
             tokens.push(Token::Slash);
+        } else if c == '=' && cs.peek() == Some(&'=') {
+            cs.next();
+            tokens.push(Token::DoubleEquals);
         } else if c.is_alphabetic() {
             let mut s = String::from(c);
 
@@ -221,6 +230,18 @@ mod test {
     #[test]
     fn r#let() -> Result<()> {
         assert_eq!(vec![Let], lex("let")?);
+        Ok(())
+    }
+
+    #[test]
+    fn r#if() -> Result<()> {
+        assert_eq!(vec![If], lex("if")?);
+        Ok(())
+    }
+
+    #[test]
+    fn double_equals() -> Result<()> {
+        assert_eq!(vec![DoubleEquals], lex("==")?);
         Ok(())
     }
 }

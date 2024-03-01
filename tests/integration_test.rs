@@ -68,3 +68,14 @@ fn arithmetic() -> Result<()> {
 fn variables() -> Result<()> {
     run_test(include_str!("variables.mcml"))
 }
+
+#[test]
+fn cond() -> Result<()> {
+    run_test(include_str!("cond.mcml"))
+}
+
+#[ignore]
+#[test]
+fn collatz() -> Result<()> {
+    run_test(include_str!("collatz.mcml"))
+}

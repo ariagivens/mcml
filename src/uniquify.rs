@@ -26,10 +26,31 @@ pub enum Expr {
     LitBool(bool),
     LitInt(i64),
     Variable(Var),
-    Plus { left: Box<Expr>, right: Box<Expr> },
-    Minus { left: Box<Expr>, right: Box<Expr> },
-    Times { left: Box<Expr>, right: Box<Expr> },
-    Divide { left: Box<Expr>, right: Box<Expr> },
+    Plus {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    Minus {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    Times {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    Divide {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    If {
+        cond: Box<Expr>,
+        thn: Box<Expr>,
+        els: Box<Expr>,
+    },
+    Eq {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    }
 }
 
 type Env = HashMap<String, Var>;
@@ -106,6 +127,15 @@ fn uniquify_expr(env: &Env, expr: prev::Expr) -> Expr {
             left: Box::new(uniquify_expr(env, *left)),
             right: Box::new(uniquify_expr(env, *right)),
         },
+        prev::Expr::If { cond, thn, els } => Expr::If {
+            cond: Box::new(uniquify_expr(env, *cond)),
+            thn: Box::new(uniquify_expr(env, *thn)),
+            els: Box::new(uniquify_expr(env, *els)),
+        },
+        prev::Expr::Eq { left, right } => Expr::Eq {
+            left: Box::new(uniquify_expr(env, *left)),
+            right: Box::new(uniquify_expr(env, *right)),
+        }
     }
 }
 

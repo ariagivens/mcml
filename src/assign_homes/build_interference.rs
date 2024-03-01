@@ -47,7 +47,7 @@ fn collect_vars(program: &prev::Program) -> HashSet<Var> {
 
 fn collect_vars_instr(vs: &mut HashSet<Var>, instr: select_instructions::Instruction) {
     match instr {
-        Instruction::Set { var, value } => {
+        Instruction::Set { var, value: _ } => {
             vs.insert(var);
         }
         Instruction::Operation {
@@ -58,25 +58,25 @@ fn collect_vars_instr(vs: &mut HashSet<Var>, instr: select_instructions::Instruc
             vs.insert(source);
             vs.insert(destination);
         }
-        Instruction::Tellraw { text } => {}
-        Instruction::Command { text } => {}
-        Instruction::ExecuteIfScoreMatches { var, value, instr } => {
+        Instruction::Tellraw { text: _ } => {}
+        Instruction::Command { text: _ } => {}
+        Instruction::ExecuteIfScoreMatchesSet { var, value, set_var, set_value } => {
             vs.insert(var);
-            collect_vars_instr(vs, *instr);
+            vs.insert(set_var);
         }
-        Instruction::ExecuteUnlessScoreMatches { var, value, instr } => {
+        Instruction::ExecuteUnlessScoreMatchesSet { var, value, set_var, set_value } => {
             vs.insert(var);
-            collect_vars_instr(vs, *instr);
+            vs.insert(set_var);
         }
-        Instruction::ExecuteIfScoreEquals { a, b, instr } => {
+        Instruction::ExecuteIfScoreEqualsSet { a, b, set_var, set_value } => {
             vs.insert(a);
             vs.insert(b);
-            collect_vars_instr(vs, *instr);
+            vs.insert(set_var);
         }
-        Instruction::ExecuteUnlessScoreEquals { a, b, instr } => {
+        Instruction::ExecuteUnlessScoreEqualsSet { a, b, set_var, set_value } => {
             vs.insert(a);
             vs.insert(b);
-            collect_vars_instr(vs, *instr);
+            vs.insert(set_var);
         }
     }
 }
@@ -84,8 +84,8 @@ fn collect_vars_instr(vs: &mut HashSet<Var>, instr: select_instructions::Instruc
 pub fn build_interference(program: &prev::Program) -> Graph {
     let mut graph = InterferenceGraph::new(program);
 
-    for test in &program.tests {
-        build_interference_block(&mut graph, &program.blocks[test.block]);
+    for block in program.blocks.node_weights() {
+        build_interference_block(&mut graph, block);
     }
 
     graph.graph

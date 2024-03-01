@@ -1,6 +1,7 @@
 use crate::select_instructions as prev;
 use crate::var::Var;
 use std::collections::{HashMap, HashSet};
+use crate::select_instructions::Instruction;
 
 type Index = petgraph::graph::NodeIndex<u32>;
 pub type Graph = petgraph::Graph<Var, (), petgraph::Undirected, u32>;
@@ -43,23 +44,23 @@ fn collect_vars_instr(vs: &mut HashSet<Var>, instr: prev::Instruction) {
         }
         prev::Instruction::Tellraw { text } => {}
         prev::Instruction::Command { text } => {}
-        prev::Instruction::ExecuteIfScoreMatches { var, value, instr } => {
+        Instruction::ExecuteIfScoreMatchesSet { var, value, set_var, set_value } => {
             vs.insert(var);
-            collect_vars_instr(vs, *instr);
+            vs.insert(set_var);
         }
-        prev::Instruction::ExecuteUnlessScoreMatches { var, value, instr } => {
+        Instruction::ExecuteUnlessScoreMatchesSet { var, value, set_var, set_value } => {
             vs.insert(var);
-            collect_vars_instr(vs, *instr);
+            vs.insert(set_var);
         }
-        prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => {
+        Instruction::ExecuteIfScoreEqualsSet { a, b, set_var, set_value } => {
             vs.insert(a);
             vs.insert(b);
-            collect_vars_instr(vs, *instr);
+            vs.insert(set_var);
         }
-        prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => {
+        Instruction::ExecuteUnlessScoreEqualsSet { a, b, set_var, set_value } => {
             vs.insert(a);
             vs.insert(b);
-            collect_vars_instr(vs, *instr);
+            vs.insert(set_var);
         }
     }
 }

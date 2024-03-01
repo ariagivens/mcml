@@ -1,11 +1,11 @@
 use anyhow::Result;
 
 use crate::datapack::Function;
-use crate::reify_locations::{self as prev};
+use crate::reify_locations::{self as prev, Run};
 use crate::runtime::{setup_runtime, Runtime};
 use crate::utility::escape;
 
-pub fn emit_text(program: prev::Program) -> Result<Vec<Function>> {
+pub fn emit_text(program: prev::Program) -> Vec<Function> {
     let Runtime {
         init: mut preamble,
         mut functions,
@@ -27,13 +27,23 @@ pub fn emit_text(program: prev::Program) -> Result<Vec<Function>> {
         tests.push_str(&format!("function mctest:test{}\n", i));
     }
 
+    for idx in program.blocks.node_indices().filter(|idx| program.tests.iter().map(|t| t.block).find(|i| i == idx).is_none()) {
+        let block = program.blocks[idx].clone();
+        let content = emit_text_block(block);
+        functions.push(Function {
+            namespace: "mctest".to_owned(),
+            name: format!("block{}", idx.index()),
+            content
+        });
+    }
+
     functions.push(Function {
         namespace: "mctest".to_owned(),
         name: "run".to_owned(),
         content: format!("{}\n{}\ntellraw @s \"<EOF>\"", preamble, tests),
     });
 
-    Ok(functions)
+    functions
 }
 
 fn emit_text_block(block: prev::Block) -> String {
@@ -65,20 +75,28 @@ fn emit_text_instr(instr: prev::Instruction) -> String {
         prev::Instruction::ExecuteIfScoreMatches {
             location,
             value,
-            instr,
+            run,
         } => format!(
-            "execute if score {location} matches {value} run {}",
-            emit_text_instr(*instr)
+            "execute if score {location} matches {value} run {}\n",
+            emit_text_run(run),
         ),
         prev::Instruction::ExecuteUnlessScoreMatches {
             location,
             value,
-            instr,
+            run,
         } => format!(
-            "execute unless score {location} matches {value} run {}",
-            emit_text_instr(*instr)
+            "execute unless score {location} matches {value} run {}\n",
+            emit_text_run(run)
         ),
-        prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => todo!(),
-        prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => todo!(),
+        prev::Instruction::ExecuteIfScoreEquals { a, b, run } => todo!(),
+        prev::Instruction::ExecuteUnlessScoreEquals { a, b, run } => todo!(),
+        prev::Instruction::Function { block } => format!("function mctest:block{}\n", block.index()),
+    }
+}
+
+fn emit_text_run(run: prev::Run) -> String {
+    match run {
+        Run::Function { block } => format!("function mctest:block{}", block.index()),
+        Run::Set { location, value } => format!("scoreboard players set {location} {value}"),
     }
 }

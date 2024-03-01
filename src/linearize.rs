@@ -1,8 +1,12 @@
-use crate::uniquify as prev;
+use std::collections::VecDeque;
+
+use itertools::Itertools;
+
+use crate::desugar_asserts as prev;
 use crate::var::{Var, VarFactory};
 
-type Graph = petgraph::Graph<Block, (), petgraph::Directed, u32>;
-type Index = petgraph::graph::NodeIndex<u32>;
+pub type Graph = petgraph::Graph<Block, Jmp, petgraph::Directed, u32>;
+pub type Index = petgraph::graph::NodeIndex<u32>;
 
 pub struct Program {
     pub blocks: Graph,
@@ -15,11 +19,24 @@ pub struct Block {
     pub stmts: Vec<Statement>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Jmp {
+    Unconditional,
+    If(Condition),
+    Unless(Condition),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Condition {
+    Cmp { cmp: Cmp, left: Atom, right: Atom },
+    Atm(Atom)
+}
+
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Statement {
     Assign { var: Var, expr: Expr },
-    Assert { atom: Atom },
-    AssertEq { left: Atom, right: Atom },
+    TellOk { test_name: String },
+    TellNotOk { test_name: String },
     Command { text: String },
 }
 
@@ -27,11 +44,13 @@ pub enum Statement {
 pub enum Expr {
     Atom(Atom),
     Binary { op: Op, left: Atom, right: Atom },
+    Cmp { cmp: Cmp, left: Atom, right: Atom },
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Atom {
     Var(Var),
+    LitUnit,
     LitInt(i64),
     LitBool(bool),
 }
@@ -42,6 +61,11 @@ pub enum Op {
     Minus,
     Times,
     Divide,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub enum Cmp {
+    Eq,
 }
 
 #[derive(Debug, Clone)]
@@ -80,139 +104,203 @@ fn linearize_stmts(
     blocks: &mut Graph,
     stmts: Vec<prev::Statement>,
 ) -> Index {
-    let mut new_stmts = Vec::new();
+    let begin = blocks.add_node(Block { stmts: Vec::new() });
+    let mut current = begin;
 
     for stmt in stmts {
-        new_stmts.extend(linearize_stmt(var_factory, stmt));
+        linearize_stmt(var_factory, blocks, &mut current, stmt);
     }
 
-    let block = Block { stmts: new_stmts };
-
-    blocks.add_node(block)
+    begin
 }
 
-fn linearize_stmt(var_factory: &mut VarFactory, stmt: prev::Statement) -> Vec<Statement> {
-    let stmts = match stmt {
-        prev::Statement::Assert { expr } => {
-            let (atom, mut stmts) = linearize_expr(var_factory, expr);
-            stmts.push(Statement::Assert { atom });
-            stmts
-        }
-        prev::Statement::AssertEq { left, right } => {
-            let (left, mut stmts) = linearize_expr(var_factory, left);
-            let (right, right_stmts) = linearize_expr(var_factory, right);
-            stmts.extend(right_stmts);
-            stmts.push(Statement::AssertEq { left, right });
-            stmts
-        }
+fn linearize_stmt(var_factory: &mut VarFactory, blocks: &mut Graph, current: &mut Index, stmt: prev::Statement) {
+    match stmt {
+        prev::Statement::Expr(expr) => {
+            let _ = linearize_expr(var_factory, blocks, current, expr);
+        },
+        prev::Statement::TellOk { test_name } => {
+            let stmts = &mut blocks.node_weight_mut(*current).unwrap().stmts;
+            stmts.push(Statement::TellOk { test_name });
+        },
+        prev::Statement::TellNotOk { test_name } => {
+            let stmts = &mut blocks.node_weight_mut(*current).unwrap().stmts;
+            stmts.push(Statement::TellNotOk { test_name });
+        },
         prev::Statement::Command { text } => {
-            vec![Statement::Command { text }]
+            let stmts = &mut blocks.node_weight_mut(*current).unwrap().stmts;
+            stmts.push(Statement::Command { text });
         }
         prev::Statement::Let { var, expr } => {
-            let (atom, mut stmts) = linearize_expr(var_factory, expr);
+            let atom = linearize_expr(var_factory, blocks, current, expr);
+            let stmts = &mut blocks.node_weight_mut(*current).unwrap().stmts;
             stmts.push(Statement::Assign {
                 var,
                 expr: Expr::Atom(atom),
             });
-            stmts
         }
-    };
-
-    stmts
+    }
 }
 
-fn linearize_expr(var_factory: &mut VarFactory, expr: prev::Expr) -> (Atom, Vec<Statement>) {
+fn linearize_expr(var_factory: &mut VarFactory, blocks: &mut Graph, current: &mut Index, expr: prev::Expr) -> Atom {
     match expr {
-        prev::Expr::LitBool(b) => (Atom::LitBool(b), vec![]),
-        prev::Expr::LitInt(i) => (Atom::LitInt(i), vec![]),
-        prev::Expr::Variable(x) => (Atom::Var(x), vec![]),
-        prev::Expr::Plus { left, right } => linearize_binary(var_factory, Op::Plus, *left, *right),
+        prev::Expr::LitUnit => Atom::LitUnit,
+        prev::Expr::Bundle { stmts, expr } => {
+            for stmt in stmts {
+                linearize_stmt(var_factory, blocks, current, stmt)
+            }
+            linearize_expr(var_factory, blocks, current, *expr)
+        },
+        prev::Expr::LitBool(b) => Atom::LitBool(b),
+        prev::Expr::LitInt(i) => Atom::LitInt(i),
+        prev::Expr::Variable(x) => Atom::Var(x),
+        prev::Expr::Plus { left, right } => linearize_binary(var_factory, blocks, current, Op::Plus, *left, *right),
         prev::Expr::Minus { left, right } => {
-            linearize_binary(var_factory, Op::Minus, *left, *right)
+            linearize_binary(var_factory, blocks, current, Op::Minus, *left, *right)
         }
         prev::Expr::Times { left, right } => {
-            linearize_binary(var_factory, Op::Times, *left, *right)
+            linearize_binary(var_factory, blocks, current, Op::Times, *left, *right)
         }
         prev::Expr::Divide { left, right } => {
-            linearize_binary(var_factory, Op::Divide, *left, *right)
+            linearize_binary(var_factory, blocks, current, Op::Divide, *left, *right)
+        }
+        prev::Expr::If { cond, thn, els } => {
+            let cond = match *cond {
+                prev::Expr::Eq { left, right } => Condition::Cmp {
+                    cmp: Cmp::Eq,
+                    left: linearize_expr(var_factory, blocks, current, *left),
+                    right: linearize_expr(var_factory, blocks, current, *right),
+                },
+                expr => Condition::Atm(linearize_expr(var_factory, blocks, current, expr)),
+            };
+            let var = var_factory.tmp();
+
+            let mut thn_block = blocks.add_node(Block { stmts: Vec::new() });
+            blocks.add_edge(*current, thn_block, Jmp::If(cond.clone()));
+            linearize_branch(var_factory, blocks, &mut thn_block, var.clone(), *thn);
+
+            let mut els_block = blocks.add_node(Block { stmts: Vec::new() });
+            blocks.add_edge(*current, els_block, Jmp::Unless(cond));
+            linearize_branch(var_factory, blocks, &mut els_block, var.clone(), *els);
+
+            let after = blocks.add_node(Block { stmts: Vec::new() });
+            blocks.add_edge(thn_block, after, Jmp::Unconditional);
+            blocks.add_edge(els_block, after, Jmp::Unconditional);
+
+            *current = after;
+            Atom::Var(var)
+        },
+        prev::Expr::Eq { left, right } => {
+            linearize_cmp(var_factory, blocks, current, Cmp::Eq, *left, *right)
         }
     }
 }
 
 fn linearize_binary(
     var_factory: &mut VarFactory,
+    blocks: &mut Graph,
+    current: &mut Index,
     op: Op,
     left: prev::Expr,
     right: prev::Expr,
-) -> (Atom, Vec<Statement>) {
-    let (left, mut stmts) = linearize_expr(var_factory, left);
-    let (right, right_stmts) = linearize_expr(var_factory, right);
-    stmts.extend(right_stmts);
-
+) -> Atom {
+    let left = linearize_expr(var_factory, blocks, current, left);
+    let right = linearize_expr(var_factory, blocks, current, right);
     let var = var_factory.tmp();
+
+    let stmts = &mut blocks.node_weight_mut(*current).unwrap().stmts;
     stmts.push(Statement::Assign {
         var: var.clone(),
         expr: Expr::Binary { left, right, op },
     });
 
-    (Atom::Var(var), stmts)
+    Atom::Var(var)
+}
+
+fn linearize_cmp(
+    var_factory: &mut VarFactory,
+    blocks: &mut Graph,
+    current: &mut Index,
+    cmp: Cmp,
+    left: prev::Expr,
+    right: prev::Expr,
+) -> Atom {
+    let left = linearize_expr(var_factory, blocks, current, left);
+    let right = linearize_expr(var_factory, blocks, current, right);
+    let var = var_factory.tmp();
+
+    let stmts = &mut blocks.node_weight_mut(*current).unwrap().stmts;
+    stmts.push(Statement::Assign {
+        var: var.clone(),
+        expr: Expr::Cmp { left, right, cmp },
+    });
+
+    Atom::Var(var)
+}
+
+fn linearize_branch(var_factory: &mut VarFactory, blocks: &mut Graph, current: &mut Index, var: Var, expr: prev::Expr) {
+    let atm = linearize_expr(var_factory, blocks, current, expr);
+    let stmts = &mut blocks.node_weight_mut(*current).unwrap().stmts;
+    stmts.push(Statement::Assign { var, expr: Expr::Atom(atm) });
 }
 
 #[cfg(test)]
 mod test {
+    use petgraph::{graph::EdgeReference, visit::{EdgeRef, IntoEdgesDirected}};
+
     use super::*;
 
-    #[test]
-    fn assert_literal() {
-        let def = prev::Definition::Test {
-            name: "test".to_owned(),
-            stmts: vec![prev::Statement::Assert {
-                expr: prev::Expr::LitBool(true),
-            }],
-        };
+    // #[test]
+    // fn assert_literal() {
+    //     let def = prev::Definition::Test {
+    //         name: "test".to_owned(),
+    //         stmts: vec![prev::Statement::Expr (
+    //             prev::Expr::LitBool(true),
+    //         )],
+    //     };
 
-        let program = linearize(prev::Program {
-            defs: vec![def],
-            var_factory: VarFactory::new(),
-        });
-        let block = program.blocks[program.tests.first().unwrap().block].clone();
+    //     let program = linearize(prev::Program {
+    //         defs: vec![def],
+    //         var_factory: VarFactory::new(),
+    //     });
+    //     let block = program.blocks[program.tests.first().unwrap().block].clone();
 
-        assert_eq!(
-            Block {
-                stmts: vec![Statement::Assert {
-                    atom: Atom::LitBool(true)
-                }]
-            },
-            block
-        );
-    }
+    //     assert_eq!(
+    //         Block {
+    //             stmts: vec![Statement::Assert {
+    //                 atom: Atom::LitBool(true)
+    //             }]
+    //         },
+    //         block
+    //     );
+    // }
 
-    #[test]
-    fn assert_eq_literal() {
-        let def = prev::Definition::Test {
-            name: "test".to_owned(),
-            stmts: vec![prev::Statement::AssertEq {
-                left: prev::Expr::LitInt(11),
-                right: prev::Expr::LitInt(12),
-            }],
-        };
+    // #[test]
+    // fn assert_eq_literal() {
+    //     let def = prev::Definition::Test {
+    //         name: "test".to_owned(),
+    //         stmts: vec![prev::Statement::AssertEq {
+    //             left: prev::Expr::LitInt(11),
+    //             right: prev::Expr::LitInt(12),
+    //         }],
+    //     };
 
-        let program = linearize(prev::Program {
-            defs: vec![def],
-            var_factory: VarFactory::new(),
-        });
-        let block = program.blocks[program.tests.first().unwrap().block].clone();
+    //     let program = linearize(prev::Program {
+    //         defs: vec![def],
+    //         var_factory: VarFactory::new(),
+    //     });
+    //     let block = program.blocks[program.tests.first().unwrap().block].clone();
 
-        assert_eq!(
-            Block {
-                stmts: vec![Statement::AssertEq {
-                    left: Atom::LitInt(11),
-                    right: Atom::LitInt(12)
-                }]
-            },
-            block
-        );
-    }
+    //     assert_eq!(
+    //         Block {
+    //             stmts: vec![Statement::AssertEq {
+    //                 left: Atom::LitInt(11),
+    //                 right: Atom::LitInt(12)
+    //             }]
+    //         },
+    //         block
+    //     );
+    // }
 
     #[test]
     fn command() {
@@ -244,8 +332,8 @@ mod test {
         // (+ (* 1 (- 2 3)) (/ 4 5))
         let def = prev::Definition::Test {
             name: "test".to_owned(),
-            stmts: vec![prev::Statement::Assert {
-                expr: prev::Expr::Plus {
+            stmts: vec![prev::Statement::Expr(
+                prev::Expr::Plus {
                     left: Box::new(prev::Expr::Times {
                         left: Box::new(prev::Expr::LitInt(1)),
                         right: Box::new(prev::Expr::Minus {
@@ -258,7 +346,7 @@ mod test {
                         right: Box::new(prev::Expr::LitInt(5)),
                     }),
                 },
-            }],
+            )],
         };
 
         let program = linearize(prev::Program {
@@ -340,13 +428,7 @@ mod test {
             panic!("Expected tmp2 = (+ tmp2 tmp3)");
         };
 
-        // assert tmp4
-        assert_eq!(
-            Statement::Assert {
-                atom: Atom::Var(tmp4)
-            },
-            stmts[4]
-        );
+        assert_eq!(stmts.len(), 4);
     }
 
     #[test]
@@ -362,13 +444,12 @@ mod test {
                     var: x.clone(),
                     expr: prev::Expr::LitInt(2),
                 },
-                prev::Statement::AssertEq {
-                    left: prev::Expr::Plus {
+                prev::Statement::Expr (
+                    prev::Expr::Plus {
                         left: Box::new(prev::Expr::Variable(x.clone())),
                         right: Box::new(prev::Expr::LitInt(1)),
                     },
-                    right: prev::Expr::LitInt(3),
-                },
+                ),
             ],
         };
 
@@ -391,8 +472,8 @@ mod test {
         };
 
         // tmp1 = (+ x 1)
-        let tmp1 = if let Statement::Assign {
-            var: tmp1,
+        if let Statement::Assign {
+            var: _,
             expr:
                 Expr::Binary {
                     left,
@@ -403,18 +484,54 @@ mod test {
         {
             assert_eq!(left, &Atom::Var(x));
             assert_eq!(right, &Atom::LitInt(1));
-            tmp1.clone()
         } else {
             panic!("Expected tmp1 = (+ x 1)");
         };
 
-        // asserteq tmp1 3
-        assert_eq!(
-            Statement::AssertEq {
-                left: Atom::Var(tmp1),
-                right: Atom::LitInt(3)
-            },
-            stmts[2]
-        );
+        assert_eq!(stmts.len(), 2);
+    }
+
+    #[test]
+    fn if_expr() {
+        // (if true false true)
+        let def = prev::Definition::Test {
+            name: "test".to_owned(),
+            stmts: vec![
+                prev::Statement::Expr(prev::Expr::If { cond: Box::new(prev::Expr::LitBool(true)), thn: Box::new(prev::Expr::LitBool(false)), els: Box::new(prev::Expr::LitBool(true)) })
+            ],
+        };
+
+        let program = linearize(prev::Program {
+            defs: vec![def],
+            var_factory: VarFactory::new(),
+        });
+        let test = program.tests.first().unwrap().block;
+        let block = program.blocks[test].clone();
+        let stmts = block.stmts;
+        let edges: Vec<EdgeReference<Jmp>> = program.blocks.edges_directed(test, petgraph::Direction::Outgoing).collect();
+
+        assert!(stmts.is_empty());
+
+        assert_eq!(edges[1].weight().clone(), Jmp::If(Condition::Atm(Atom::LitBool(true))));
+        assert_eq!(edges[0].weight().clone(), Jmp::Unless(Condition::Atm(Atom::LitBool(true))));
+
+        let thn_stmts = program.blocks[edges[1].target()].stmts.clone();
+        let Statement::Assign { var: tmp, expr: Expr::Atom(Atom::LitBool(false)) } = thn_stmts[0].clone() else {
+            panic!();
+        };
+        let after_thn: EdgeReference<Jmp> = program.blocks.edges_directed(edges[0].target(), petgraph::Direction::Outgoing).next().unwrap();
+
+        let els_stmts = program.blocks[edges[0].target()].stmts.clone();
+        let Statement::Assign { var: tmp_prime, expr: Expr::Atom(Atom::LitBool(true)) } = els_stmts[0].clone() else {
+            panic!();
+        };
+        let after_els: EdgeReference<Jmp> = program.blocks.edges_directed(edges[1].target(), petgraph::Direction::Outgoing).next().unwrap();
+
+        assert_eq!(tmp, tmp_prime);
+        assert_eq!(after_thn.target(), after_els.target());
+        assert_eq!(after_thn.weight().clone(), Jmp::Unconditional);
+
+        let after_stmts = program.blocks[after_thn.target()].stmts.clone();
+        assert_eq!(after_stmts.len(), 0);
     }
 }

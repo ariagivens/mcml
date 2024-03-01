@@ -4,7 +4,7 @@ mod color_graph;
 mod uncover_live;
 
 use crate::linearize::Test;
-use crate::select_instructions::{self as prev, Op};
+use crate::select_instructions::{self as prev, Index, Op};
 use crate::var::Var;
 use build_interference::build_interference;
 use build_move::build_move;
@@ -14,7 +14,7 @@ use uncover_live::uncover_live;
 
 use self::color_graph::color_graph;
 
-type Graph = petgraph::Graph<Block, (), petgraph::Directed, u32>;
+pub type Graph = petgraph::Graph<Block, Jmp, petgraph::Directed, u32>;
 
 #[derive(Debug)]
 pub struct Program {
@@ -44,26 +44,57 @@ pub enum Instruction {
     Command {
         text: String,
     },
-    ExecuteIfScoreMatches {
+    ExecuteIfScoreMatchesSet {
         location: Location,
         value: i64,
-        instr: Box<Instruction>,
+        set_location: Location,
+        set_value: i64,
     },
-    ExecuteUnlessScoreMatches {
+    ExecuteUnlessScoreMatchesSet {
         location: Location,
         value: i64,
-        instr: Box<Instruction>,
+        set_location: Location,
+        set_value: i64,
     },
-    ExecuteIfScoreEquals {
+    ExecuteIfScoreEqualsSet {
         a: Location,
         b: Location,
-        instr: Box<Instruction>,
+        set_location: Location,
+        set_value: i64,
     },
-    ExecuteUnlessScoreEquals {
+    ExecuteUnlessScoreEqualsSet {
         a: Location,
         b: Location,
-        instr: Box<Instruction>,
+        set_location: Location,
+        set_value: i64,
     },
+}
+
+#[derive(Debug, Clone)]
+pub enum Jmp {
+    ExecuteIfScoreMatchesFunction {
+        location: Location,
+        value: i64,
+        block: Index,
+    },
+    ExecuteUnlessScoreMatchesFunction {
+        location: Location,
+        value: i64,
+        block: Index,
+    },
+    ExecuteIfScoreEqualsFunction {
+        a: Location,
+        b: Location,
+        block: Index,
+    },
+    ExecuteUnlessScoreEqualsFunction {
+        a: Location,
+        b: Location,
+        block: Index,
+    },
+    Function {
+        block: Index,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,7 +213,7 @@ pub fn assign_homes(program: prev::Program) -> Program {
 fn assign_homes_program(program: prev::Program, location_map: &HashMap<Var, Location>) -> Program {
     let blocks = program.blocks.map(
         |_, n| assign_homes_block(n.clone(), location_map),
-        |_, e| *e,
+        |_, e| assign_homes_jmp(e.clone(), location_map),
     );
     Program {
         blocks,
@@ -220,34 +251,51 @@ fn assign_homes_instr(
         },
         prev::Instruction::Tellraw { text } => Instruction::Tellraw { text },
         prev::Instruction::Command { text } => Instruction::Command { text },
-        prev::Instruction::ExecuteIfScoreMatches { var, value, instr } => {
-            Instruction::ExecuteIfScoreMatches {
+        prev::Instruction::ExecuteIfScoreMatchesSet { var, value, set_var, set_value } => {
+            Instruction::ExecuteIfScoreMatchesSet {
                 location: location_map[&var].clone(),
                 value,
-                instr: Box::new(assign_homes_instr(*instr, location_map)),
+                set_location: location_map[&set_var].clone(),
+                set_value,
             }
-        }
-        prev::Instruction::ExecuteUnlessScoreMatches { var, value, instr } => {
-            Instruction::ExecuteUnlessScoreMatches {
+        },
+        prev::Instruction::ExecuteUnlessScoreMatchesSet { var, value, set_var, set_value } => {
+            Instruction::ExecuteUnlessScoreMatchesSet {
                 location: location_map[&var].clone(),
                 value,
-                instr: Box::new(assign_homes_instr(*instr, location_map)),
+                set_location: location_map[&set_var].clone(),
+                set_value,
             }
         }
-        prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => {
-            Instruction::ExecuteIfScoreEquals {
+        prev::Instruction::ExecuteIfScoreEqualsSet { a, b, set_var, set_value } => {
+            Instruction::ExecuteIfScoreEqualsSet {
                 a: location_map[&a].clone(),
                 b: location_map[&b].clone(),
-                instr: Box::new(assign_homes_instr(*instr, location_map)),
+                set_location: location_map[&set_var].clone(),
+                set_value
             }
         }
-        prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => {
-            Instruction::ExecuteUnlessScoreEquals {
+        prev::Instruction::ExecuteUnlessScoreEqualsSet { a, b, set_var, set_value } => {
+            Instruction::ExecuteUnlessScoreEqualsSet {
                 a: location_map[&a].clone(),
                 b: location_map[&b].clone(),
-                instr: Box::new(assign_homes_instr(*instr, location_map)),
+                set_location: location_map[&set_var].clone(),
+                set_value
             }
         }
+    }
+}
+
+fn assign_homes_jmp(
+    jmp: prev::Jmp,
+    location_map: &HashMap<Var, Location>
+) -> Jmp {
+    match jmp {
+        prev::Jmp::ExecuteIfScoreMatchesFunction { var, value, block } => Jmp::ExecuteIfScoreMatchesFunction { location: location_map[&var].clone(), value, block },
+        prev::Jmp::ExecuteUnlessScoreMatchesFunction { var, value, block } => Jmp::ExecuteUnlessScoreMatchesFunction { location: location_map[&var].clone(), value, block },
+        prev::Jmp::ExecuteIfScoreEqualsFunction { a, b, block } => Jmp::ExecuteIfScoreEqualsFunction { a: location_map[&a].clone(), b: location_map[&b].clone(), block },
+        prev::Jmp::ExecuteUnlessScoreEqualsFunction { a, b, block } => Jmp::ExecuteUnlessScoreEqualsFunction { a: location_map[&a].clone(), b: location_map[&b].clone(), block },
+        prev::Jmp::Function { block } => Jmp::Function { block },
     }
 }
 
@@ -261,10 +309,14 @@ fn write_set(instr: &prev::Instruction) -> HashSet<Var> {
         } => HashSet::from([destination.clone()]),
         prev::Instruction::Tellraw { text } => HashSet::new(),
         prev::Instruction::Command { text } => HashSet::new(),
-        prev::Instruction::ExecuteIfScoreMatches { var, value, instr } => write_set(instr),
-        prev::Instruction::ExecuteUnlessScoreMatches { var, value, instr } => write_set(instr),
-        prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => write_set(instr),
-        prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => write_set(instr),
+        prev::Instruction::ExecuteIfScoreMatchesSet { var, value, set_var, set_value } =>
+            HashSet::from([set_var.clone()]),
+        prev::Instruction::ExecuteUnlessScoreMatchesSet { var, value, set_var, set_value } =>
+            HashSet::from([set_var.clone()]),
+        prev::Instruction::ExecuteIfScoreEqualsSet { a, b, set_var, set_value } =>
+            HashSet::from([set_var.clone()]),
+        prev::Instruction::ExecuteUnlessScoreEqualsSet { a, b, set_var, set_value } =>
+            HashSet::from([set_var.clone()]),
     }
 }
 
@@ -283,29 +335,9 @@ fn read_set(instr: &prev::Instruction) -> HashSet<Var> {
         } => HashSet::from([source.clone(), destination.clone()]),
         prev::Instruction::Tellraw { text } => HashSet::new(),
         prev::Instruction::Command { text } => HashSet::new(),
-        prev::Instruction::ExecuteIfScoreMatches { var, value, instr } => {
-            HashSet::from([var.clone()])
-                .union(&read_set(instr))
-                .cloned()
-                .collect()
-        }
-        prev::Instruction::ExecuteUnlessScoreMatches { var, value, instr } => {
-            HashSet::from([var.clone()])
-                .union(&read_set(instr))
-                .cloned()
-                .collect()
-        }
-        prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => {
-            HashSet::from([a.clone(), b.clone()])
-                .union(&read_set(instr))
-                .cloned()
-                .collect()
-        }
-        prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => {
-            HashSet::from([a.clone(), b.clone()])
-                .union(&read_set(instr))
-                .cloned()
-                .collect()
-        }
+        prev::Instruction::ExecuteIfScoreMatchesSet { var, value, set_var, set_value } => HashSet::from([var.clone()]),
+        prev::Instruction::ExecuteUnlessScoreMatchesSet { var, value, set_var, set_value } => HashSet::from([var.clone()]),
+        prev::Instruction::ExecuteIfScoreEqualsSet { a, b, set_var, set_value } => HashSet::from([a.clone(), b.clone()]),
+        prev::Instruction::ExecuteUnlessScoreEqualsSet { a, b, set_var, set_value } => HashSet::from([a.clone(), b.clone()]),
     }
 }

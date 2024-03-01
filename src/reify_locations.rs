@@ -3,8 +3,10 @@ use std::fmt::Display;
 use crate::linearize::Test;
 use crate::select_instructions::Op;
 type Graph = petgraph::Graph<Block, (), petgraph::Directed, u32>;
+type Index = petgraph::graph::NodeIndex<u32>;
 
-use crate::assign_homes::{self as prev, Register};
+use crate::assign_homes::Register;
+use crate::insert_jmps as prev;
 
 #[derive(Debug)]
 pub struct Program {
@@ -43,23 +45,32 @@ pub enum Instruction {
     ExecuteIfScoreMatches {
         location: Location,
         value: i64,
-        instr: Box<Instruction>,
+        run: Run,
     },
     ExecuteUnlessScoreMatches {
         location: Location,
         value: i64,
-        instr: Box<Instruction>,
+        run: Run,
     },
     ExecuteIfScoreEquals {
         a: Location,
         b: Location,
-        instr: Box<Instruction>,
+        run: Run,
     },
     ExecuteUnlessScoreEquals {
         a: Location,
         b: Location,
-        instr: Box<Instruction>,
+        run: Run,
     },
+    Function {
+        block: Index,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Run {
+    Function { block: Index },
+    Set { location: Location, value: i64 },
 }
 
 #[derive(Clone, Debug)]
@@ -192,70 +203,75 @@ fn reify_location_instr(instr: prev::Instruction) -> Vec<Instruction> {
         prev::Instruction::ExecuteIfScoreMatches {
             location: prev::Location::Register(r),
             value,
-            instr,
+            run,
         } => {
-            if let prev::Instruction::Tellraw { text } = *instr {
-                vec![Instruction::ExecuteIfScoreMatches {
-                    location: Location::Register(r),
-                    value,
-                    instr: Box::new(Instruction::Tellraw { text }),
-                }]
-            } else {
-                panic!("Non-tellraw execute-ifs not supported yet.");
-            }
+            let (run, after) = reify_location_run(run);
+            let mut instrs = vec![Instruction::ExecuteIfScoreMatches {
+                location: Location::Register(r),
+                value,
+                run,
+            }];
+            instrs.extend(after);
+            instrs
         }
         prev::Instruction::ExecuteIfScoreMatches {
             location: prev::Location::Stack { offset },
             value,
-            instr,
+            run,
         } => {
-            if let prev::Instruction::Tellraw { text } = *instr {
-                vec![
-                    Instruction::Pop { offset },
-                    Instruction::ExecuteIfScoreMatches {
-                        location: Location::StackItem,
-                        value,
-                        instr: Box::new(Instruction::Tellraw { text }),
-                    },
-                ]
-            } else {
-                panic!("Non-tellraw execute-ifs not supported yet.");
-            }
+            let (run, after) = reify_location_run(run);
+            let mut instrs = vec![
+                Instruction::Pop { offset },
+                Instruction::ExecuteIfScoreMatches {
+                    location: Location::StackItem,
+                    value,
+                    run
+                },
+            ];
+            instrs.extend(after);
+            instrs
         }
         prev::Instruction::ExecuteUnlessScoreMatches {
             location: prev::Location::Register(r),
             value,
-            instr,
+            run,
         } => {
-            if let prev::Instruction::Tellraw { text } = *instr {
-                vec![Instruction::ExecuteUnlessScoreMatches {
+            let (run, after) = reify_location_run(run);
+            let mut instrs = vec![Instruction::ExecuteUnlessScoreMatches {
                     location: Location::Register(r),
                     value,
-                    instr: Box::new(Instruction::Tellraw { text }),
-                }]
-            } else {
-                panic!("Non-tellraw execute-ifs not supported yet.");
-            }
+                    run,
+                }];
+            instrs.extend(after);
+            instrs
         }
         prev::Instruction::ExecuteUnlessScoreMatches {
             location: prev::Location::Stack { offset },
             value,
-            instr,
+            run
         } => {
-            if let prev::Instruction::Tellraw { text } = *instr {
-                vec![
+            let (run, after) = reify_location_run(run);
+            let mut instrs = vec![
                     Instruction::Pop { offset },
                     Instruction::ExecuteUnlessScoreMatches {
                         location: Location::StackItem,
                         value,
-                        instr: Box::new(Instruction::Tellraw { text }),
+                        run,
                     },
-                ]
-            } else {
-                panic!("Non-tellraw execute-ifs not supported yet.");
-            }
+                ];
+            instrs.extend(after);
+            instrs
         }
-        prev::Instruction::ExecuteIfScoreEquals { a, b, instr } => todo!(),
-        prev::Instruction::ExecuteUnlessScoreEquals { a, b, instr } => todo!(),
+        prev::Instruction::ExecuteIfScoreEquals { a, b, run } => todo!(),
+        prev::Instruction::ExecuteUnlessScoreEquals { a, b, run } => todo!(),
+        prev::Instruction::Function { block } => vec![ Instruction::Function { block } ],
+    }
+}
+
+fn reify_location_run(run: prev::Run) -> (Run, Vec<Instruction>) {
+    match run {
+        prev::Run::Function { block } => (Run::Function { block }, Vec::new()),
+        prev::Run::Set { location: prev::Location::Register(r), value } => (Run::Set { location: Location::Register(r), value }, Vec::new()),
+        prev::Run::Set { location: prev::Location::Stack { offset }, value } => (Run::Set { location: Location::StackItem, value }, vec![Instruction::Push { offset }])
     }
 }

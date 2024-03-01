@@ -1,0 +1,12 @@
+(fn collatz (n)
+    (if (== n 1)
+        1
+        (+ 1 (f (if (== (n % 2) 0)
+                    (/ n 2)
+                    (+ (* 3 n) 1))))))
+
+(test "collatz"
+    (asserteq (collatz 1) 1)
+    (asserteq (collatz 2) 2)
+    (asserteq (collatz 3) 8)
+    (asserteq (collatz 4) 3))

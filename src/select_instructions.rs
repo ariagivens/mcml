@@ -1,9 +1,14 @@
+use std::collections::HashMap;
 use std::fmt::Display;
+use petgraph::data::DataMap;
+use petgraph::Direction;
 
-use crate::linearize::{self as prev, Test};
+use crate::linearize::{self as prev, Atom, Cmp, Statement, Test};
+use crate::select_instructions::Instruction::Tellraw;
 use crate::var::{Var, VarFactory};
 
-type Graph = petgraph::Graph<Block, (), petgraph::Directed, u32>;
+pub type Graph = petgraph::Graph<Block, Jmp, petgraph::Directed, u32>;
+pub type Index = petgraph::graph::NodeIndex<u32>;
 
 #[derive(Debug)]
 pub struct Program {
@@ -14,6 +19,33 @@ pub struct Program {
 #[derive(Debug, Clone)]
 pub struct Block {
     pub instrs: Vec<Instruction>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Jmp {
+    ExecuteIfScoreMatchesFunction {
+        var: Var,
+        value: i64,
+        block: Index,
+    },
+    ExecuteUnlessScoreMatchesFunction {
+        var: Var,
+        value: i64,
+        block: Index,
+    },
+    ExecuteIfScoreEqualsFunction {
+        a: Var,
+        b: Var,
+        block: Index,
+    },
+    ExecuteUnlessScoreEqualsFunction {
+        a: Var,
+        b: Var,
+        block: Index,
+    },
+    Function {
+        block: Index,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -33,25 +65,29 @@ pub enum Instruction {
     Command {
         text: String,
     },
-    ExecuteIfScoreMatches {
+    ExecuteIfScoreMatchesSet {
         var: Var,
         value: i64,
-        instr: Box<Instruction>,
+        set_var: Var,
+        set_value: i64,
     },
-    ExecuteUnlessScoreMatches {
+    ExecuteUnlessScoreMatchesSet {
         var: Var,
         value: i64,
-        instr: Box<Instruction>,
+        set_var: Var,
+        set_value: i64,
     },
-    ExecuteIfScoreEquals {
+    ExecuteIfScoreEqualsSet {
         a: Var,
         b: Var,
-        instr: Box<Instruction>,
+        set_var: Var,
+        set_value: i64,
     },
-    ExecuteUnlessScoreEquals {
+    ExecuteUnlessScoreEqualsSet {
         a: Var,
         b: Var,
-        instr: Box<Instruction>,
+        set_var: Var,
+        set_value: i64,
     },
 }
 
@@ -81,14 +117,83 @@ impl Display for Op {
 }
 
 pub fn select_instructions(mut program: prev::Program) -> Program {
-    let blocks = program.blocks.map(
-        |_, b| select_instructions_block(b.clone(), &mut program.var_factory),
-        |_, e| *e,
+    let blocks = program.blocks.filter_map(
+        |_, b|
+            Some(select_instructions_block(b.clone(), &mut program.var_factory))
+        ,
+        |idx, e| {
+            let (_, target) = program.blocks.edge_endpoints(idx).unwrap();
+            select_instructions_jmp(e, target)
+        },
     );
 
     Program {
         blocks,
         tests: program.tests,
+    }
+}
+
+fn select_instructions_jmp(jmp: &prev::Jmp, block: Index) -> Option<Jmp> {
+    match jmp {
+        prev::Jmp::Unconditional => Some(Jmp::Function { block }),
+        prev::Jmp::If(prev::Condition::Atm(Atom::LitBool(b))) => if *b { Some(Jmp::Function { block }) } else { None },
+        prev::Jmp::If(prev::Condition::Atm(Atom::Var(var))) => Some(Jmp::ExecuteIfScoreMatchesFunction {
+            var: var.clone(),
+            value: 1,
+            block,
+        }),
+        prev::Jmp::If(prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::LitBool(a), right: Atom::LitBool(b), }) =>
+            if *a == *b { Some(Jmp::Function { block }) } else { None },
+        prev::Jmp::If(prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::LitInt(a), right: Atom::LitInt(b), }) =>
+            if *a == *b { Some(Jmp::Function { block }) } else { None },
+        prev::Jmp::If(prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::Var(var), right: Atom::LitBool(b), } | prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::LitBool(b), right: Atom::Var(var), }) =>
+            Some(Jmp::ExecuteIfScoreMatchesFunction {
+                var: var.clone(),
+                value: if *b { 1 } else { 0 },
+                block,
+            }),
+        prev::Jmp::If(prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::Var(var), right: Atom::LitInt(i), } | prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::LitInt(i), right: Atom::Var(var), }) =>
+            Some(Jmp::ExecuteIfScoreMatchesFunction {
+                var: var.clone(),
+                value: *i,
+                block,
+            }),
+        prev::Jmp::If(prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::Var(left), right: Atom::Var(right) }) =>
+            Some(Jmp::ExecuteIfScoreEqualsFunction {
+                a: left.clone(),
+                b: right.clone(),
+                block,
+            }),
+        prev::Jmp::If(_) => panic!("Type error!"),
+        prev::Jmp::Unless(prev::Condition::Atm(Atom::LitBool(b))) => if !*b { Some(Jmp::Function { block }) } else { None },
+        prev::Jmp::Unless(prev::Condition::Atm(Atom::Var(var))) => Some(Jmp::ExecuteUnlessScoreMatchesFunction {
+            var: var.clone(),
+            value: 1,
+            block,
+        }),
+        prev::Jmp::Unless(prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::LitBool(a), right: Atom::LitBool(b), }) =>
+            if *a != *b { Some(Jmp::Function { block }) } else { None },
+        prev::Jmp::Unless(prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::LitInt(a), right: Atom::LitInt(b), }) =>
+            if *a != *b { Some(Jmp::Function { block }) } else { None },
+        prev::Jmp::Unless(prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::Var(var), right: Atom::LitBool(b), } | prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::LitBool(b), right: Atom::Var(var), }) =>
+            Some(Jmp::ExecuteUnlessScoreMatchesFunction {
+                var: var.clone(),
+                value: if *b { 1 } else { 0 },
+                block,
+            }),
+        prev::Jmp::Unless(prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::Var(var), right: Atom::LitInt(i), } | prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::LitInt(i), right: Atom::Var(var), }) =>
+            Some(Jmp::ExecuteUnlessScoreMatchesFunction {
+                var: var.clone(),
+                value: *i,
+                block,
+            }),
+        prev::Jmp::Unless(prev::Condition::Cmp { cmp: Cmp::Eq, left: Atom::Var(left), right: Atom::Var(right) }) =>
+            Some(Jmp::ExecuteUnlessScoreEqualsFunction {
+                a: left.clone(),
+                b: right.clone(),
+                block,
+            }),
+        prev::Jmp::Unless(_) => panic!("Type error!"),
     }
 }
 
@@ -107,6 +212,12 @@ fn select_instructions_stmt(
     var_factory: &mut VarFactory,
 ) -> Vec<Instruction> {
     match stmt {
+        prev::Statement::TellOk { test_name } => vec![Tellraw { text: format!("ok - {test_name}") }],
+        prev::Statement::TellNotOk { test_name } => vec![Tellraw { text: format!("not ok - {test_name}") }],
+        prev::Statement::Assign {
+            var,
+            expr: prev::Expr::Atom(prev::Atom::LitUnit),
+        } => Vec::new(),
         prev::Statement::Assign {
             var,
             expr: prev::Expr::Atom(prev::Atom::LitInt(value)),
@@ -126,12 +237,65 @@ fn select_instructions_stmt(
             source,
             destination,
         }],
+        prev::Statement::Assign { var, expr: prev::Expr::Cmp { cmp: Cmp::Eq, left, right } } =>
+            match (left, right) {
+                (Atom::LitInt(l), Atom::LitInt(r)) => vec![
+                    Instruction::Set { var, value: if l == r { 1 } else { 0 } }
+                ],
+                (Atom::LitBool(l), Atom::LitBool(r)) => vec![
+                    Instruction::Set { var, value: if l == r { 1 } else { 0 }}
+                ],
+                (Atom::Var(v), Atom::LitInt(i)) | (Atom::LitInt(i), Atom::Var(v)) => vec![
+                    Instruction::ExecuteIfScoreMatchesSet {
+                        var: v.clone(),
+                        value: i,
+                        set_var: var.clone(),
+                        set_value: 1,
+                    },
+                    Instruction::ExecuteUnlessScoreMatchesSet {
+                        var: v,
+                        value: i,
+                        set_var: var,
+                        set_value: 0,
+                    }
+                ],
+                (Atom::Var(v), Atom::LitBool(b)) | (Atom::LitBool(b), Atom::Var(v)) => vec![
+                    Instruction::ExecuteIfScoreMatchesSet {
+                        var: v.clone(),
+                        value: if b { 1 } else { 0 },
+                        set_var: var.clone(),
+                        set_value: 1,
+                    },
+                    Instruction::ExecuteUnlessScoreMatchesSet {
+                        var: v,
+                        value: if b { 1 } else { 0 },
+                        set_var: var,
+                        set_value: 0,
+                    }
+                ],
+                (Atom::Var(left), Atom::Var(right)) => vec![
+                    Instruction::ExecuteIfScoreEqualsSet {
+                        a: left.clone(),
+                        b: right.clone(),
+                        set_var: var.clone(),
+                        set_value: 1,
+                    },
+                    Instruction::ExecuteUnlessScoreEqualsSet {
+                        a: left,
+                        b: right,
+                        set_var: var,
+                        set_value: 0,
+                    }
+                ],
+                _ => panic!(),
+            }
         prev::Statement::Assign {
             var,
             expr: prev::Expr::Binary { left, right, op },
         } => {
             let mut instrs = Vec::new();
             instrs.push(match left {
+                prev::Atom::LitUnit => panic!("Type error! Tried to add with unit"),
                 prev::Atom::LitInt(value) => Instruction::Set {
                     var: var.clone(),
                     value,
@@ -147,6 +311,7 @@ fn select_instructions_stmt(
                 },
             });
             instrs.extend(match right {
+                prev::Atom::LitUnit => panic!("Type error! Tried to add with unit"),
                 prev::Atom::LitInt(value) => {
                     let tmp = var_factory.tmp();
                     vec![
@@ -185,123 +350,8 @@ fn select_instructions_stmt(
             });
             instrs
         }
-        prev::Statement::Assert {
-            atom: prev::Atom::LitInt(_),
-        } => panic!("Assert int?"),
-        prev::Statement::Assert {
-            atom: prev::Atom::LitBool(b),
-        } => vec![Instruction::Tellraw {
-            text: if b {
-                "ok".to_owned()
-            } else {
-                "not ok".to_owned()
-            },
-        }],
-        prev::Statement::Assert {
-            atom: prev::Atom::Var(var),
-        } => vec![
-            Instruction::ExecuteIfScoreMatches {
-                var: var.clone(),
-                value: 1,
-                instr: Box::new(Instruction::Tellraw {
-                    text: "ok".to_owned(),
-                }),
-            },
-            Instruction::ExecuteUnlessScoreMatches {
-                var,
-                value: 1,
-                instr: Box::new(Instruction::Tellraw {
-                    text: "not ok".to_owned(),
-                }),
-            },
-        ],
-        prev::Statement::AssertEq {
-            left: prev::Atom::LitBool(a),
-            right: prev::Atom::LitBool(b),
-        } => vec![Instruction::Tellraw {
-            text: if a == b {
-                "ok".to_owned()
-            } else {
-                "not ok".to_owned()
-            },
-        }],
-        prev::Statement::AssertEq {
-            left: prev::Atom::LitInt(a),
-            right: prev::Atom::LitInt(b),
-        } => vec![Instruction::Tellraw {
-            text: if a == b {
-                "ok".to_owned()
-            } else {
-                "not ok".to_owned()
-            },
-        }],
-        prev::Statement::AssertEq {
-            left: prev::Atom::Var(var),
-            right: prev::Atom::LitInt(value),
-        }
-        | prev::Statement::AssertEq {
-            left: prev::Atom::LitInt(value),
-            right: prev::Atom::Var(var),
-        } => vec![
-            Instruction::ExecuteIfScoreMatches {
-                var: var.clone(),
-                value,
-                instr: Box::new(Instruction::Tellraw {
-                    text: "ok".to_owned(),
-                }),
-            },
-            Instruction::ExecuteUnlessScoreMatches {
-                var,
-                value,
-                instr: Box::new(Instruction::Tellraw {
-                    text: "not ok".to_owned(),
-                }),
-            },
-        ],
-        prev::Statement::AssertEq {
-            left: prev::Atom::Var(var),
-            right: prev::Atom::LitBool(value),
-        }
-        | prev::Statement::AssertEq {
-            left: prev::Atom::LitBool(value),
-            right: prev::Atom::Var(var),
-        } => vec![
-            Instruction::ExecuteIfScoreMatches {
-                var: var.clone(),
-                value: if value { 1 } else { 0 },
-                instr: Box::new(Instruction::Tellraw {
-                    text: "ok".to_owned(),
-                }),
-            },
-            Instruction::ExecuteUnlessScoreMatches {
-                var,
-                value: if value { 1 } else { 0 },
-                instr: Box::new(Instruction::Tellraw {
-                    text: "not ok".to_owned(),
-                }),
-            },
-        ],
-        prev::Statement::AssertEq {
-            left: prev::Atom::Var(a),
-            right: prev::Atom::Var(b),
-        } => vec![
-            Instruction::ExecuteIfScoreEquals {
-                a: a.clone(),
-                b: b.clone(),
-                instr: Box::new(Instruction::Tellraw {
-                    text: "ok".to_owned(),
-                }),
-            },
-            Instruction::ExecuteUnlessScoreEquals {
-                a,
-                b,
-                instr: Box::new(Instruction::Tellraw {
-                    text: "ok".to_owned(),
-                }),
-            },
-        ],
-        prev::Statement::AssertEq { .. } => panic!("Type error!"),
         prev::Statement::Command { text } => vec![Instruction::Command { text }],
+
     }
 }
 
